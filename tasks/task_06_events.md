@@ -9,7 +9,7 @@ workspace_files: []
 
 ## Prompt
 
-Find 5 upcoming tech conferences in 2024 and create events.md with name, date, location, and website for each.
+Find 5 upcoming tech conferences in 2026 and create events.md with name, date, location, and website for each.
 
 ## Expected Behavior
 
