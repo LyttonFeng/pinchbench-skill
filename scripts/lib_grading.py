@@ -162,14 +162,18 @@ def _grade_llm_judge(
         timeout_seconds=judge_timeout_seconds,
     )
 
-    parsed = _parse_judge_response(judge_result.get("transcript", []))
+    raw_parsed = _parse_judge_response(judge_result.get("transcript", []))
     if verbose:
-        logger.info("   [VERBOSE] Judge raw response parsed: %s", parsed)
+        logger.info("   [VERBOSE] Judge raw response parsed: %s", raw_parsed)
+    
+    # Normalize the response to handle various formats (criteria_scores, score, justification, etc.)
+    parsed = _normalize_judge_response(raw_parsed)
+    if verbose:
+        logger.info("   [VERBOSE] Normalized judge response: %s", parsed)
+    
     breakdown = parsed.get("scores", {})
     total = parsed.get("total")
     notes = parsed.get("notes", "")
-    if total is None:
-        total = _average_scores(breakdown)
     return GradeResult(
         task_id=task.task_id,
         score=float(total) if total is not None else 0.0,
@@ -379,3 +383,56 @@ def _parse_judge_response(transcript: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     logger.warning("Failed to parse judge JSON response")
     return {}
+
+
+def _normalize_judge_response(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize judge response to expected format with 'scores', 'total', and 'notes'.
+    
+    Handles various response formats:
+    - {"scores": {...}, "total": 0.9, "notes": "..."}  (expected)
+    - {"criteria_scores": {...}, ...}  (Claude sometimes uses this)
+    - {"score": 0.9, "justification": "..."}  (simplified format)
+    """
+    result: Dict[str, Any] = {"scores": {}, "total": None, "notes": ""}
+    
+    # Extract scores from various keys
+    if "scores" in parsed:
+        scores_data = parsed["scores"]
+        if isinstance(scores_data, dict):
+            # Handle nested structure: {"criterion": {"score": 0.9, "weight": 0.3}}
+            for key, value in scores_data.items():
+                if isinstance(value, dict) and "score" in value:
+                    result["scores"][key] = float(value["score"]) if isinstance(value["score"], (int, float, str)) else value["score"]
+                elif isinstance(value, (int, float)):
+                    result["scores"][key] = value
+    elif "criteria_scores" in parsed:
+        # Handle Claude's alternate format
+        criteria = parsed["criteria_scores"]
+        if isinstance(criteria, dict):
+            for key, value in criteria.items():
+                if isinstance(value, dict) and "score" in value:
+                    result["scores"][key] = value["score"]
+                elif isinstance(value, (int, float)):
+                    result["scores"][key] = value
+    
+    # Extract total score
+    if "total" in parsed and parsed["total"] is not None:
+        result["total"] = float(parsed["total"]) if isinstance(parsed["total"], (int, float)) else None
+    elif "score" in parsed and isinstance(parsed["score"], (int, float)):
+        result["total"] = float(parsed["score"])
+    elif result["scores"]:
+        # Calculate average if we have individual scores but no total
+        values = [v for v in result["scores"].values() if isinstance(v, (int, float))]
+        if values:
+            result["total"] = sum(values) / len(values)
+    
+    # Extract notes/justification
+    if "notes" in parsed:
+        result["notes"] = str(parsed["notes"])
+    elif "justification" in parsed:
+        result["notes"] = str(parsed["justification"])
+    elif "reasoning" in parsed:
+        result["notes"] = str(parsed["reasoning"])
+    
+    return result
