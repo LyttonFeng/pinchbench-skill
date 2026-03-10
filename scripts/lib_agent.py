@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -15,18 +16,21 @@ from lib_tasks import Task
 
 
 logger = logging.getLogger(__name__)
-MAX_OPENCLAW_MESSAGE_CHARS = 4000
+MAX_OPENCLAW_MESSAGE_CHARS = int(os.environ.get("PINCHBENCH_MAX_MSG_CHARS", "4000"))
 
 
 def slugify_model(model_id: str) -> str:
     return model_id.replace("/", "-").replace(".", "-")
 
 
+KNOWN_PROVIDERS = ("openrouter/", "vllm/", "ollama/", "nvidia-api/", "nvidia-nemotron/")
+
+
 def normalize_model_id(model_id: str) -> str:
     """Ensure model id is provider-qualified for OpenClaw."""
     if "/" not in model_id:
         return model_id
-    if model_id.startswith("openrouter/"):
+    if any(model_id.startswith(p) for p in KNOWN_PROVIDERS):
         return model_id
     return f"openrouter/{model_id}"
 
