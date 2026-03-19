@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from lib_agent import ensure_agent_exists, run_openclaw_prompt, slugify_model
 from lib_tasks import Task

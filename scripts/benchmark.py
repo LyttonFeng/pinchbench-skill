@@ -136,7 +136,7 @@ class BenchmarkRunner:
 
         # Print summary
         total_time = sum(r["execution_time"] for r in results)
-        logger.info(f"\n📊 BENCHMARK SUMMARY")
+        logger.info("\n📊 BENCHMARK SUMMARY")
         logger.info(f"   Agent: {agent.agent_id}")
         logger.info(f"   Tasks completed: {len(results)}")
         logger.info(f"   Total execution time: {total_time:.2f}s")
