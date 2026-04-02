@@ -586,6 +586,47 @@ def main():
     tasks_by_id = {task.task_id: task for task in tasks_to_run}
 
     runs_per_task = max(1, args.runs)
+
+    # Incremental result writer: builds partial result JSON from completed
+    # tasks so external tools can poll progress while the benchmark runs.
+    incremental_dir = Path(args.output_dir)
+    incremental_dir.mkdir(parents=True, exist_ok=True)
+    incremental_path = incremental_dir / f"{run_id}_{model_slug}.json"
+
+    def _write_incremental_results():
+        task_entries = [
+            {
+                "task_id": r["task_id"],
+                "status": r["status"],
+                "timed_out": r["timed_out"],
+                "execution_time": r["execution_time"],
+                "transcript_length": len(r["transcript"]),
+                "usage": r.get("usage", {}),
+                "workspace": r["workspace"],
+                "grading": grades_by_task_id.get(r["task_id"], {}),
+                "frontmatter": tasks_by_id[r["task_id"]].frontmatter,
+            }
+            for r in results
+        ]
+        efficiency = _compute_efficiency_summary(task_entries, grades_by_task_id)
+        partial = {
+            "model": args.model,
+            "benchmark_version": _get_git_version(skill_root),
+            "run_id": run_id,
+            "timestamp": time.time(),
+            "suite": args.suite,
+            "runs_per_task": runs_per_task,
+            "tasks": task_entries,
+            "efficiency": efficiency,
+            "in_progress": True,
+            "completed_tasks": len(grades_by_task_id),
+            "total_tasks": len(tasks_to_run),
+        }
+        try:
+            incremental_path.write_text(json.dumps(partial, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
     for i, task in enumerate(tasks_to_run, 1):
         task_grades = []
         task_results = []
@@ -699,39 +740,45 @@ def main():
                     "⚠️ Sanity check scored 0%% but transcripts were missing for all runs; skipping fail-fast as likely infrastructure/logging issue."
                 )
 
+        # Incremental write: update result JSON after each task so partial
+        # results are available while the benchmark is still running.
+        _write_incremental_results()
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    task_entries = [
-        {
-            "task_id": result["task_id"],
-            "status": result["status"],
-            "timed_out": result["timed_out"],
-            "execution_time": result["execution_time"],
-            "transcript_length": len(result["transcript"]),
-            "usage": result.get("usage", {}),
-            "workspace": result["workspace"],
-            "grading": grades_by_task_id[result["task_id"]],
-            "frontmatter": tasks_by_id[result["task_id"]].frontmatter,
-        }
-        for result in results
-    ]
-
-    efficiency = _compute_efficiency_summary(task_entries, grades_by_task_id)
-
-    aggregate = {
-        "model": args.model,
-        "benchmark_version": _get_git_version(skill_root),
-        "run_id": run_id,
-        "timestamp": time.time(),
-        "suite": args.suite,
-        "runs_per_task": runs_per_task,
-        "tasks": task_entries,
-        "efficiency": efficiency,
-    }
-
     output_path = output_dir / f"{run_id}_{model_slug}.json"
-    output_path.write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
+
+    def _build_and_write_results():
+        """Build aggregate result from completed tasks and write to output_path."""
+        task_entries = [
+            {
+                "task_id": result["task_id"],
+                "status": result["status"],
+                "timed_out": result["timed_out"],
+                "execution_time": result["execution_time"],
+                "transcript_length": len(result["transcript"]),
+                "usage": result.get("usage", {}),
+                "workspace": result["workspace"],
+                "grading": grades_by_task_id[result["task_id"]],
+                "frontmatter": tasks_by_id[result["task_id"]].frontmatter,
+            }
+            for result in results
+        ]
+        efficiency = _compute_efficiency_summary(task_entries, grades_by_task_id)
+        aggregate = {
+            "model": args.model,
+            "benchmark_version": _get_git_version(skill_root),
+            "run_id": run_id,
+            "timestamp": time.time(),
+            "suite": args.suite,
+            "runs_per_task": runs_per_task,
+            "tasks": task_entries,
+            "efficiency": efficiency,
+        }
+        output_path.write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
+        return task_entries, efficiency
+
+    task_entries, efficiency = _build_and_write_results()
 
     # Calculate and log final score summary
     total_score = sum(grades_by_task_id[tid]["mean"] for tid in grades_by_task_id)
