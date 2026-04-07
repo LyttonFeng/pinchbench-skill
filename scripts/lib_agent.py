@@ -1047,6 +1047,8 @@ def call_judge_api(
     prompt: str,
     model: str,
     timeout_seconds: float = 120.0,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call a judge model directly via API, bypassing OpenClaw.
 
@@ -1055,9 +1057,17 @@ def call_judge_api(
       - anthropic/*  -> Anthropic Messages API
       - openai/*     -> OpenAI chat completions API
       - claude       -> headless Claude CLI (claude -p)
+      - (custom base_url) -> any OpenAI-compatible endpoint
 
     Returns {"status": str, "text": str, "error"?: str}.
     """
+    # Custom endpoint takes priority over prefix-based dispatch
+    if base_url:
+        resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not resolved_key:
+            return {"status": "error", "text": "", "error": "No API key provided for custom judge endpoint"}
+        endpoint = base_url.rstrip("/") + "/chat/completions"
+        return _judge_via_openai_compat(prompt, model, endpoint, resolved_key, timeout_seconds)
     if model == "claude" or model.startswith("claude:"):
         return _judge_via_claude_cli(prompt, model, timeout_seconds)
     if model.startswith("anthropic/"):

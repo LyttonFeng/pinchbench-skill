@@ -52,6 +52,8 @@ def grade_task(
     judge_agent_prefix: str = DEFAULT_JUDGE_AGENT_PREFIX,
     judge_timeout_seconds: float = DEFAULT_JUDGE_TIMEOUT_SECONDS,
     judge_backend: str = "openclaw",
+    judge_base_url: Optional[str] = None,
+    judge_api_key: Optional[str] = None,
     verbose: bool = False,
 ) -> GradeResult:
     grading_type = task.grading_type
@@ -72,6 +74,8 @@ def grade_task(
             judge_agent_prefix=judge_agent_prefix,
             judge_timeout_seconds=judge_timeout_seconds,
             judge_backend=judge_backend,
+            judge_base_url=judge_base_url,
+            judge_api_key=judge_api_key,
             skill_dir=skill_dir,
             verbose=verbose,
         )
@@ -87,6 +91,8 @@ def grade_task(
             judge_agent_prefix=judge_agent_prefix,
             judge_timeout_seconds=judge_timeout_seconds,
             judge_backend=judge_backend,
+            judge_base_url=judge_base_url,
+            judge_api_key=judge_api_key,
             skill_dir=skill_dir,
             verbose=verbose,
         )
@@ -148,6 +154,8 @@ def _grade_llm_judge(
     judge_agent_prefix: str,
     judge_timeout_seconds: float,
     judge_backend: str = "openclaw",
+    judge_base_url: Optional[str] = None,
+    judge_api_key: Optional[str] = None,
     skill_dir: Optional[Path] = None,
     verbose: bool = False,
 ) -> GradeResult:
@@ -184,6 +192,8 @@ def _grade_llm_judge(
             prompt=prompt,
             model=judge_model,
             timeout_seconds=judge_timeout_seconds,
+            base_url=judge_base_url,
+            api_key=judge_api_key,
         )
 
         if verbose:

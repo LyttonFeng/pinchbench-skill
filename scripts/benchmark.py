@@ -718,6 +718,10 @@ def main():
                 if args.judge:
                     grade_kwargs["judge_model"] = args.judge
                     grade_kwargs["judge_backend"] = "api"
+                    if args.base_url:
+                        grade_kwargs["judge_base_url"] = args.base_url
+                    if args.api_key:
+                        grade_kwargs["judge_api_key"] = args.api_key
                 grade = grade_task(**grade_kwargs)
             except Exception as exc:
                 if execution_error:
