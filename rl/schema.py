@@ -2,7 +2,7 @@
 PinchBench RL 训练数据格式定义。
 
 一条 TrainingSample 对应一次完整的 task 执行（一个 episode）。
-多条 sample 组成一个 GRPO group（同一 prompt，K 次采样）。
+训练算法：single-sample turn-level clipped PG + critic baseline + ref KL。
 """
 
 from __future__ import annotations
@@ -26,16 +26,16 @@ class TurnMessage:
       - "assistant" : agent 的回复（可能包含 tool_calls）
       - "tool"      : tool 执行结果
 
-    logprobs: assistant turn 的每个 token 的 log prob。
-      - GRPO 训练必需，采样时由 vLLM 记录
-      - 若用 openclaw 采样（无法拿到 logprobs），设为 None
-      - 后续可用 vLLM 离线 re-score 补全
+    logprobs: assistant turn 每个 token 的 log prob（list of float）。
+      - single-sample PG 训练必需，用于计算 importance ratio
+      - openclaw 采样时无法获取，需要 vLLM re-score 补全（见 rescore.py）
+      - 补全前设为 None
     """
     role: str
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
-    tool_name: Optional[str] = None       # role == "tool" 时填写
-    logprobs: Optional[list[float]] = None  # role == "assistant" 时填写
+    tool_name: Optional[str] = None         # role == "tool" 时填写
+    logprobs: Optional[list[float]] = None  # role == "assistant" 时填写，re-score 后补全
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role, "content": self.content}
@@ -69,7 +69,9 @@ class TurnMessage:
 class Reward:
     """Terminal reward，来自 PinchBench grading 函数。
 
-    terminal: grading 函数输出的 [0, 1] 分数，作为 GRPO 的 reward。
+    terminal: grading 函数输出的 [0, 1] 分数。
+      - 广播到该 episode 所有 assistant turn 作为 terminal reward
+      - 叠加在 turn-level immediate reward 和 next-state reward 上
     breakdown: 各评分维度的细项分数，用于分析和 debug。
     """
     terminal: float
@@ -108,7 +110,7 @@ class UsageStats:
         )
 
 
-# seed 范围 → split 映射（与 clawgym 保持一致）
+# seed 范围 → split 映射
 _SPLIT_BANDS = [
     (0, 10_000, "train"),
     (10_000, 11_000, "val"),
@@ -126,24 +128,43 @@ def split_for_seed(seed: int) -> str:
 
 @dataclass
 class TrainingSample:
-    """一次完整的 task 执行，对应 GRPO group 中的一条 trajectory。
+    """一次完整的 task 执行，对应一条训练样本。
 
     sample_id 格式：{task_id}-seed{seed}-run{run_index}
+
+    训练用途（single-sample PG）：
+      - trajectory 里每个 assistant turn = 一个训练 step
+      - reward.terminal 广播到所有 turn 作为 terminal reward
+      - logprobs 在 rescore.py 补全后用于计算 importance ratio
     """
     sample_id: str
     task_id: str
     split: str                      # train / val / test / ood
     seed: int                       # task 变体的生成 seed
-    run_index: int                  # 同一 task 第几次采样（GRPO group 内的 index）
-    model_id: str
-    prompt: str                     # 发给 agent 的完整 prompt（task.prompt）
+    run_index: int                  # 第几次采样（同一 task 多次运行时区分）
+    model_id: str                   # 采样时使用的模型
+    prompt: str                     # 发给 agent 的完整 prompt
     grading_type: str               # automated / llm_judge / hybrid
-    trajectory: list[TurnMessage]
-    reward: Reward
+    trajectory: list[TurnMessage]   # 完整对话轮次
+    reward: Reward                  # terminal reward
     usage: UsageStats = field(default_factory=UsageStats)
     execution_time: float = 0.0
     timed_out: bool = False
     workspace: str = ""             # 执行时的 workspace 路径（调试用）
+
+    @property
+    def has_logprobs(self) -> bool:
+        """是否已经补全 logprobs（re-score 后才为 True）。"""
+        return any(
+            t.logprobs is not None
+            for t in self.trajectory
+            if t.role == "assistant"
+        )
+
+    @property
+    def assistant_turns(self) -> list[TurnMessage]:
+        """所有 assistant turn，训练时的实际步骤。"""
+        return [t for t in self.trajectory if t.role == "assistant"]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -181,46 +202,3 @@ class TrainingSample:
             timed_out=d.get("timed_out", False),
             workspace=d.get("workspace", ""),
         )
-
-
-@dataclass
-class GRPOGroup:
-    """同一 task prompt 的 K 次采样，构成一个 GRPO 训练组。
-
-    samples 里的所有 sample 来自同一 task（相同 task_id + seed），
-    prompt 相同，reward 不同，用于组内对比计算 advantage。
-    """
-    task_id: str
-    seed: int
-    prompt: str
-    samples: list[TrainingSample]
-
-    @property
-    def rewards(self) -> list[float]:
-        return [s.reward.terminal for s in self.samples]
-
-    @property
-    def split(self) -> str:
-        return self.samples[0].split if self.samples else "ood"
-
-    def advantages(self) -> list[float]:
-        """GRPO 组内归一化 advantage。"""
-        import statistics
-        r = self.rewards
-        if len(r) <= 1:
-            return [0.0] * len(r)
-        mu = statistics.mean(r)
-        sigma = statistics.stdev(r)
-        if sigma < 1e-8:
-            return [0.0] * len(r)
-        return [(x - mu) / sigma for x in r]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "task_id": self.task_id,
-            "seed": self.seed,
-            "prompt": self.prompt,
-            "rewards": self.rewards,
-            "advantages": self.advantages(),
-            "samples": [s.to_dict() for s in self.samples],
-        }

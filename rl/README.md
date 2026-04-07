@@ -1,40 +1,57 @@
 # PinchBench RL
 
-用 PinchBench 的 task 作为训练环境，构建 GRPO 训练数据。
+用 PinchBench 的 task 模拟 Live-User 场景，构建 single-sample PG 训练数据。
 
 ## 核心思路
 
-PinchBench 的每个 task 天然满足 RL 训练的要求：
+PinchBench 的每个 task 对应一个真实用户请求场景：
 
-- **真实 tool call 环境**：通过 openclaw agent 执行，不是 mock
-- **确定性 reward**：automated grading 函数直接出 0/1 信号
-- **workspace 隔离**：每次执行独立，没有副作用，支持多次采样
-- **Live-User 场景**：task prompt 就是真实用户请求
+- **task prompt = 用户请求**：日历、邮件、研究、写作等真实任务
+- **openclaw 执行 = 真实 agent 交互**：不回滚，不多采样，一次执行一条 trajectory
+- **grading 函数 = terminal reward**：automated 类型有确定性 0/1 信号
+- **workspace 隔离**：每次执行独立，无副作用
 
 ```
-task prompt（原始或变体）
-    → openclaw agent 执行 K 次（每次独立 workspace）
-    → grading 函数打 terminal reward [0, 1]
-    → K 条 trajectory + reward → GRPO 组内对比训练
+task prompt（用户请求）
+    → openclaw + Qwen3-1.7B 执行一次
+    → transcript（真实 tool call 序列）
+    → grading 打 terminal reward [0, 1]
+    → vLLM re-score 补 logprobs
+    → TrainingSample → single-sample PG 训练
 ```
+
+## 技术栈
+
+| 组件 | 说明 |
+|------|------|
+| openclaw | agent 执行环境（本地 Mac） |
+| Qwen3-1.7B | 训练目标模型（开源权重） |
+| vLLM | 推理服务 + re-score logprobs（RunPod） |
+| veRL | RL 训练框架（RunPod A100） |
+| PinchBench | 采样环境 + 评测集 |
 
 ## 目录结构
 
 ```
 rl/
   README.md               # 本文件
-  schema.py               # 训练数据格式定义
-  collect.py              # 采样脚本：对指定 task 跑 K 次，收集 trajectory
-  convert.py              # 转换：openclaw transcript → 训练格式
+  schema.py               # 训练数据格式（TrainingSample）
+  collect.py              # 采样：跑 PinchBench task，收集 transcript
+  convert.py              # 转换：openclaw transcript → TrainingSample
+  rescore.py              # re-score：vLLM 补全 logprobs
   analyze.py              # 分析 benchmark 结果，输出 RL 难度分布
+  train/
+    train.py              # veRL single-sample PG 训练主脚本
+    reward.py             # reward 计算（terminal + immediate）
+    data.py               # 训练数据加载
+  scripts/
+    start_vllm.sh         # RunPod 上启动 vLLM serve
+    setup_runpod.sh       # RunPod 环境初始化
   tasks/                  # 训练专用 task 变体（不污染测试集）
-    task_21_comprehension_train_*.md
-    ...
+    README.md
 ```
 
 ## 数据格式（TrainingSample）
-
-每条训练样本是一个 JSON 对象，一个 task 的 K 次采样打包在一起：
 
 ```json
 {
@@ -42,8 +59,9 @@ rl/
   "task_id": "task_21_openclaw_comprehension",
   "split": "train",
   "seed": 42,
-  "model_id": "qwen-plus",
-  "prompt": "What is the capital of France?...",
+  "run_index": 0,
+  "model_id": "Qwen/Qwen3-1.7B",
+  "prompt": "...",
   "grading_type": "automated",
   "trajectory": [
     {
@@ -53,33 +71,25 @@ rl/
     {
       "role": "assistant",
       "content": "...",
-      "tool_calls": [
-        {"name": "bash", "arguments": {"command": "echo hello"}}
-      ],
-      "logprobs": null
+      "tool_calls": [{"name": "bash", "arguments": {"command": "..."}}],
+      "logprobs": [-0.12, -0.45, ...]
     },
     {
       "role": "tool",
       "tool_name": "bash",
-      "content": "hello"
+      "content": "..."
     },
     {
       "role": "assistant",
-      "content": "Done."
+      "content": "Done.",
+      "logprobs": [-0.08, ...]
     }
   ],
   "reward": {
     "terminal": 0.8,
-    "breakdown": {
-      "criterion_a": 1.0,
-      "criterion_b": 0.6
-    }
+    "breakdown": {"criterion_a": 1.0, "criterion_b": 0.6}
   },
-  "usage": {
-    "input_tokens": 12000,
-    "output_tokens": 300,
-    "total_tokens": 12300
-  },
+  "usage": {"input_tokens": 12000, "output_tokens": 300, "total_tokens": 12300},
   "execution_time": 25.3,
   "timed_out": false
 }
@@ -89,76 +99,116 @@ rl/
 
 | 字段 | 含义 |
 |------|------|
-| `sample_id` | 唯一 ID，`{task_id}-seed{seed}-run{i}` |
-| `task_id` | 对应 PinchBench task ID |
-| `split` | `train` / `val` / `test`（test 永远不进训练） |
-| `seed` | task 变体的 seed，控制 train/val/test 划分 |
-| `model_id` | 采样时使用的模型 |
-| `prompt` | 发给 agent 的完整 prompt |
-| `grading_type` | `automated` / `llm_judge` / `hybrid` |
-| `trajectory` | 完整对话轮次，包含 tool calls |
-| `trajectory[].logprobs` | 每个 token 的 log prob，GRPO 训练必需；采样时记录 |
-| `reward.terminal` | grading 函数输出的 [0,1] 分数，作为 terminal reward |
-| `reward.breakdown` | 各评分维度的细项分数 |
+| `sample_id` | 唯一 ID，格式 `{task_id}-seed{seed}-run{i}` |
+| `split` | `train` / `val` / `test`（test 不进训练） |
+| `seed` | task 变体 seed，控制 train/val/test 划分 |
+| `trajectory[].logprobs` | vLLM re-score 后补全，训练必需 |
+| `reward.terminal` | grading 分数 [0,1]，广播到所有 assistant turn |
 
 ### Split 划分
-
-seed 范围决定 split（与 clawgym 保持一致）：
 
 | Split | Seed 范围 | 用途 |
 |-------|-----------|------|
 | train | [0, 10000) | 训练 |
-| val | [10000, 11000) | 验证，监控过拟合 |
-| test | [11000, 12000) | 禁止训练，仅评估 |
+| val | [10000, 11000) | 验证 |
+| test | [11000, 12000) | 评估（禁止训练） |
 
-PinchBench 原始 25 个 task 对应 test split，**永远不进训练**。
+**PinchBench 原始 25 个 task = test split，永远不进训练。**
+训练数据来自 `rl/tasks/` 下的变体 task。
 
-训练数据来自 `rl/tasks/` 下的变体 task（相同类型，不同 prompt 措辞）。
+## RL 算法：Single-Sample PG
+
+参考 `docs/rl-algorithm.md`（Phase 1）。
+
+### Reward 分解
+
+```
+r_t = r_immediate + r_terminal（广播）
+
+r_immediate:
+  - 格式错误 / 幻觉 / 工具参数非法 → -1（直接惩罚）
+  - 格式正常 → 0（看 terminal）
+
+r_terminal:
+  - grading 函数输出 [0, 1]
+  - 广播到该 episode 所有 assistant turn
+```
+
+### 训练 Loss
+
+```
+L = L_PG + β_kl * KL(π_θ || π_ref) + c_critic * L_critic
+
+L_PG = -Σ min(ρ_i * A_t, clip(ρ_i, 1-ε, 1+ε) * A_t)
+ρ_i = exp(logp_new_i - logp_old_i)
+A_t = r_t - V_φ(h_t)   # critic baseline 降方差
+```
 
 ## 快速开始
 
-### 1. 分析 benchmark 结果，找 RL 目标 task
+### Step 1：RunPod 起 vLLM
 
 ```bash
-python rl/analyze.py results/0004_qwen-plus.json
+# RunPod 上执行
+bash rl/scripts/setup_runpod.sh
+bash rl/scripts/start_vllm.sh Qwen/Qwen3-1.7B
 ```
 
-### 2. 对目标 task 采样 K 次
+### Step 2：配置 openclaw 接 vLLM
 
 ```bash
+# 本地 Mac，把 openclaw 的模型换成 RunPod vLLM
+python rl/collect.py --setup \
+  --base-url http://<runpod-ip>:8000/v1 \
+  --model Qwen/Qwen3-1.7B
+```
+
+### Step 3：采样 training task
+
+```bash
+# 对 rl/tasks/ 下的变体 task 各跑一次
 python rl/collect.py \
-  --task task_21_openclaw_comprehension \
-  --runs 8 \
-  --model qwen-plus \
-  --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 \
-  --api-key YOUR_KEY \
-  --output rl/data/
+  --tasks-dir rl/tasks \
+  --base-url http://<runpod-ip>:8000/v1 \
+  --model Qwen/Qwen3-1.7B \
+  --output rl/data/samples_raw.jsonl
 ```
 
-### 3. 查看采集结果
+### Step 4：vLLM re-score 补 logprobs
 
 ```bash
-python rl/analyze.py rl/data/task_21_openclaw_comprehension.jsonl
+# RunPod 上执行
+python rl/rescore.py \
+  --input rl/data/samples_raw.jsonl \
+  --output rl/data/samples_rescored.jsonl \
+  --model Qwen/Qwen3-1.7B \
+  --base-url http://localhost:8000/v1
 ```
 
-## RL 算法
+### Step 5：veRL 训练
 
-使用 **GRPO**（Group Relative Policy Optimization）：
+```bash
+# RunPod 上执行
+python rl/train/train.py \
+  --data rl/data/samples_rescored.jsonl \
+  --model Qwen/Qwen3-1.7B \
+  --output rl/checkpoints/
+```
 
-- 同一 prompt 采样 K 条 trajectory
-- terminal reward 来自 grading 函数
-- 组内归一化 advantage：`A_k = (r_k - mean(r)) / std(r)`
-- 不需要 critic，不需要 reference model 显式 KL（由 clip 控制）
+### Step 6：PinchBench 评测
 
-适合 PinchBench 场景的原因：
-- workspace 隔离，K 次采样互不干扰
-- grading 是确定性函数，reward 无噪声（automated 类型）
-- terminal reward 粒度够用，不需要 per-step dense reward
+```bash
+# 本地 Mac，更新 openclaw 用新 checkpoint
+./scripts/run.sh \
+  --model Qwen3-1.7B-finetuned \
+  --base-url http://<runpod-ip>:8000/v1 \
+  --no-upload \
+  --suite automated-only
+```
 
 ## 注意事项
 
-1. **logprobs 必须在采样时记录**：训练框架（veRL/trl）需要 old log prob 计算 importance ratio。推理用 vLLM，设置 `logprobs=True`。
-
-2. **只用 automated grading 的 task 做 RL 主力**：llm_judge reward 有噪声，适合辅助分析，不适合直接做训练信号。
-
-3. **变体 task 的 grading 函数要跟着改**：换了人名/时间/参数，grading 里的 regex 也要对应更新。
+1. **只用 automated grading 的 task 做 RL 主力**：reward 确定性强，无噪声
+2. **logprobs 必须 re-score 后才能训练**：openclaw 不暴露 token logprobs
+3. **变体 task 的 grading 函数要同步更新**：换了参数，regex 也要改
+4. **分析 hard bucket 再决定训练哪些 task**：`python rl/analyze.py results/latest.json`

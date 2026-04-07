@@ -1,0 +1,282 @@
+"""
+PinchBench RL 采样脚本。
+
+对 rl/tasks/ 下的变体 task（或指定 task）各执行一次 openclaw agent，
+收集 transcript，经 convert.py 转成 TrainingSample，写入 JSONL。
+
+用法：
+    # 配置 openclaw 接 vLLM（首次运行）
+    python rl/collect.py --setup \
+        --base-url http://<runpod-ip>:8000/v1 \
+        --model Qwen/Qwen3-1.7B
+
+    # 对 rl/tasks/ 下所有变体 task 采样
+    python rl/collect.py \
+        --tasks-dir rl/tasks \
+        --base-url http://<runpod-ip>:8000/v1 \
+        --model Qwen/Qwen3-1.7B \
+        --output rl/data/samples_raw.jsonl
+
+    # 对指定 task 文件采样
+    python rl/collect.py \
+        --task rl/tasks/task_21_comprehension_train_001.md \
+        --base-url http://<runpod-ip>:8000/v1 \
+        --model Qwen/Qwen3-1.7B \
+        --output rl/data/samples_raw.jsonl
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+import time
+from pathlib import Path
+
+# 把 scripts/ 加进 import 路径，复用 benchmark 的库
+_REPO_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+
+from lib_agent import ensure_agent_exists, execute_openclaw_task, cleanup_agent_sessions
+from lib_grading import grade_task
+from lib_tasks import TaskLoader, Task
+from convert import transcript_to_sample
+from schema import split_for_seed
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("collect")
+
+_RL_AGENT_ID = "rl-collect-agent"
+_TRANSCRIPT_TMP_DIR = Path("/tmp/pinchbench_rl/transcripts")
+
+
+def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
+    """配置 openclaw 接 vLLM endpoint。"""
+    import json as _json
+    import subprocess
+
+    logger.info("配置 openclaw agent: %s -> %s", _RL_AGENT_ID, base_url)
+    workspace = Path("/tmp/pinchbench_rl/workspace")
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    ensure_agent_exists(
+        _RL_AGENT_ID,
+        model,
+        workspace,
+        base_url=base_url,
+        api_key=api_key,
+    )
+    logger.info("openclaw agent 配置完成: %s", _RL_AGENT_ID)
+
+
+def _load_rl_tasks(tasks_dir: Path) -> list[Task]:
+    """加载 rl/tasks/ 下的变体 task。"""
+    if not tasks_dir.exists():
+        logger.error("tasks 目录不存在: %s", tasks_dir)
+        sys.exit(1)
+    loader = TaskLoader(tasks_dir)
+    tasks = loader.load_all_tasks()
+    logger.info("加载到 %d 个 RL 训练 task", len(tasks))
+    return tasks
+
+
+def _load_single_task(task_path: Path) -> Task:
+    """加载单个 task 文件。"""
+    loader = TaskLoader(task_path.parent)
+    tasks = loader.load_all_tasks()
+    matched = [t for t in tasks if t.task_id in task_path.stem]
+    if not matched:
+        # fallback: 加载第一个
+        matched = tasks
+    if not matched:
+        logger.error("无法加载 task: %s", task_path)
+        sys.exit(1)
+    return matched[0]
+
+
+def collect_one(
+    task: Task,
+    model_id: str,
+    base_url: str,
+    api_key: str | None,
+    skill_dir: Path,
+    seed: int,
+    run_index: int,
+    output_path: Path,
+) -> bool:
+    """执行一个 task，采集 transcript，写入 TrainingSample。"""
+    run_id = f"rl-{int(time.time())}"
+    transcript_dir = _TRANSCRIPT_TMP_DIR / run_id
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("采样 task=%s seed=%d run=%d", task.task_id, seed, run_index)
+
+    cleanup_agent_sessions(_RL_AGENT_ID)
+
+    try:
+        result = execute_openclaw_task(
+            task=task,
+            agent_id=_RL_AGENT_ID,
+            model_id=model_id,
+            run_id=run_id,
+            timeout_multiplier=1.0,
+            skill_dir=skill_dir,
+            output_dir=transcript_dir,
+            verbose=False,
+        )
+    except Exception as exc:
+        logger.warning("task 执行失败 %s: %s", task.task_id, exc)
+        return False
+
+    # grading
+    try:
+        grade = grade_task(
+            task=task,
+            execution_result=result,
+            skill_dir=skill_dir,
+        )
+    except Exception as exc:
+        logger.warning("grading 失败 %s: %s", task.task_id, exc)
+        return False
+
+    transcript_path = transcript_dir / f"{task.task_id}.jsonl"
+    if not transcript_path.exists():
+        logger.warning("transcript 文件不存在: %s", transcript_path)
+        return False
+
+    # 转成 TrainingSample
+    try:
+        sample = transcript_to_sample(
+            transcript_path=transcript_path,
+            task_id=task.task_id,
+            prompt=task.prompt,
+            grading_type=task.grading_type,
+            reward_terminal=grade.score,
+            reward_breakdown=grade.breakdown,
+            model_id=model_id,
+            seed=seed,
+            run_index=run_index,
+            execution_time=result.get("execution_time", 0.0),
+            timed_out=result.get("timed_out", False),
+            workspace=result.get("workspace", ""),
+        )
+    except Exception as exc:
+        logger.warning("transcript 转换失败 %s: %s", task.task_id, exc)
+        return False
+
+    # 写入 JSONL
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(sample.to_dict(), ensure_ascii=False) + "\n")
+
+    split = split_for_seed(seed)
+    logger.info(
+        "✅ %s  reward=%.3f  split=%s  turns=%d",
+        task.task_id,
+        grade.score,
+        split,
+        len(sample.assistant_turns),
+    )
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="PinchBench RL 采样脚本")
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="仅配置 openclaw agent，不采样",
+    )
+    parser.add_argument(
+        "--tasks-dir",
+        type=Path,
+        default=Path("rl/tasks"),
+        help="RL 训练 task 目录（默认 rl/tasks/）",
+    )
+    parser.add_argument(
+        "--task",
+        type=Path,
+        default=None,
+        help="指定单个 task 文件路径",
+    )
+    parser.add_argument(
+        "--base-url",
+        required=True,
+        help="vLLM endpoint URL，如 http://<runpod-ip>:8000/v1",
+    )
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="模型 ID，如 Qwen/Qwen3-1.7B",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="API key（vLLM 本地服务可留空或填任意字符串）",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("rl/data/samples_raw.jsonl"),
+        help="输出 JSONL 文件路径",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="本次采样的 seed（决定 train/val/test split）",
+    )
+    parser.add_argument(
+        "--run-index",
+        type=int,
+        default=0,
+        help="本次是第几次采样（同一 task 多次运行时区分）",
+    )
+    args = parser.parse_args()
+
+    skill_dir = _REPO_ROOT
+    api_key = args.api_key or "dummy"  # vLLM 本地服务不需要真实 key
+
+    # 配置 openclaw
+    _setup_openclaw(args.base_url, args.model, api_key)
+
+    if args.setup:
+        logger.info("--setup 完成，退出")
+        return
+
+    # 加载 task
+    if args.task:
+        tasks = [_load_single_task(args.task)]
+    else:
+        tasks = _load_rl_tasks(args.tasks_dir)
+
+    if not tasks:
+        logger.error("没有找到可用的 task")
+        sys.exit(1)
+
+    # 采样
+    success = 0
+    for task in tasks:
+        ok = collect_one(
+            task=task,
+            model_id=args.model,
+            base_url=args.base_url,
+            api_key=api_key,
+            skill_dir=skill_dir,
+            seed=args.seed,
+            run_index=args.run_index,
+            output_path=args.output,
+        )
+        if ok:
+            success += 1
+
+    logger.info("采样完成：%d/%d 成功 → %s", success, len(tasks), args.output)
+
+
+if __name__ == "__main__":
+    main()
