@@ -1,8 +1,11 @@
 """
 PinchBench RL 采样脚本。
 
-对 rl/tasks/ 下的变体 task（或指定 task）各执行一次 openclaw agent，
-收集 transcript，经 convert.py 转成 TrainingSample，写入 JSONL。
+对指定 task（或 tasks-dir 下所有 task）执行多次 openclaw agent，
+每次独立 workspace，收集 transcript，经 convert.py 转成 TrainingSample，写入 JSONL。
+
+Live-User 场景：同一个 task 跑多次 = 用户反复发相似请求，模型边用边学。
+--runs 控制每个 task 的采样次数，seed 自动递增保证 sample_id 不重复。
 
 用法：
     # 配置 openclaw 接 vLLM（首次运行）
@@ -10,16 +13,11 @@ PinchBench RL 采样脚本。
         --base-url http://<runpod-ip>:8000/v1 \
         --model Qwen/Qwen3-1.7B
 
-    # 对 rl/tasks/ 下所有变体 task 采样
+    # 对 3 个 hard task 各采样 30 次（共 90 条 trajectory）
     python rl/collect.py \
-        --tasks-dir rl/tasks \
-        --base-url http://<runpod-ip>:8000/v1 \
-        --model Qwen/Qwen3-1.7B \
-        --output rl/data/samples_raw.jsonl
-
-    # 对指定 task 文件采样
-    python rl/collect.py \
-        --task rl/tasks/task_21_comprehension_train_001.md \
+        --tasks-dir tasks \
+        --task-ids task_18_spreadsheet_summary task_03_blog task_24_polymarket_briefing \
+        --runs 30 \
         --base-url http://<runpod-ip>:8000/v1 \
         --model Qwen/Qwen3-1.7B \
         --output rl/data/samples_raw.jsonl
@@ -226,16 +224,22 @@ def main() -> None:
         help="输出 JSONL 文件路径",
     )
     parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="本次采样的 seed（决定 train/val/test split）",
+        "--task-ids",
+        nargs="+",
+        default=None,
+        help="只采样指定 task_id（空格分隔），不传则采样所有 task",
     )
     parser.add_argument(
-        "--run-index",
+        "--runs",
+        type=int,
+        default=1,
+        help="每个 task 的采样次数（默认 1，Live-User 场景建议 30）",
+    )
+    parser.add_argument(
+        "--seed-start",
         type=int,
         default=0,
-        help="本次是第几次采样（同一 task 多次运行时区分）",
+        help="起始 seed，之后每次采样自动 +1（决定 train/val/test split）",
     )
     args = parser.parse_args()
 
@@ -255,27 +259,44 @@ def main() -> None:
     else:
         tasks = _load_rl_tasks(args.tasks_dir)
 
+    # 按 task_id 过滤
+    if args.task_ids:
+        tasks = [t for t in tasks if t.task_id in args.task_ids]
+        if not tasks:
+            logger.error("--task-ids 指定的 task 未找到: %s", args.task_ids)
+            sys.exit(1)
+
     if not tasks:
         logger.error("没有找到可用的 task")
         sys.exit(1)
 
-    # 采样
-    success = 0
-    for task in tasks:
-        ok = collect_one(
-            task=task,
-            model_id=args.model,
-            base_url=args.base_url,
-            api_key=api_key,
-            skill_dir=skill_dir,
-            seed=args.seed,
-            run_index=args.run_index,
-            output_path=args.output,
-        )
-        if ok:
-            success += 1
+    total = len(tasks) * args.runs
+    logger.info(
+        "开始采样：%d 个 task × %d 次 = %d 条 trajectory",
+        len(tasks), args.runs, total,
+    )
 
-    logger.info("采样完成：%d/%d 成功 → %s", success, len(tasks), args.output)
+    # 多次采样循环：每个 task 跑 --runs 次，seed 自动递增
+    success = 0
+    global_run = 0
+    for task in tasks:
+        for run_index in range(args.runs):
+            seed = args.seed_start + global_run
+            ok = collect_one(
+                task=task,
+                model_id=args.model,
+                base_url=args.base_url,
+                api_key=api_key,
+                skill_dir=skill_dir,
+                seed=seed,
+                run_index=run_index,
+                output_path=args.output,
+            )
+            if ok:
+                success += 1
+            global_run += 1
+
+    logger.info("采样完成：%d/%d 成功 → %s", success, total, args.output)
 
 
 if __name__ == "__main__":
