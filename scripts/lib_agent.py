@@ -330,6 +330,11 @@ def ensure_agent_exists(
             "defaultModel": model_id,
         }
         bench_models.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        # openclaw may overwrite models.json asynchronously after agent creation;
+        # re-write after a short delay to ensure our config wins
+        import time as _time
+        _time.sleep(2)
+        bench_models.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
         logger.info(
             "Configured custom provider (%s) with model %s for agent %s",
             base_url,
