@@ -307,33 +307,28 @@ def ensure_agent_exists(
 
     if base_url:
         # Custom OpenAI-compatible endpoint — build a provider entry
-        data: dict[str, Any] = {}
-        if main_models.exists():
-            try:
-                data = json.loads(main_models.read_text("utf-8-sig"))
-            except (json.JSONDecodeError, OSError):
-                data = {}
-
-        key_ref = api_key if api_key else "${OPENAI_API_KEY}"
-        providers = data.setdefault("models", {}).setdefault("providers", {})
-        data["models"]["mode"] = "merge"
-        providers["custom"] = {
-            "baseUrl": base_url,
-            "apiKey": key_ref,
-            "api": "openai-completions",
-            "models": [
-                {
-                    "id": model_id,
-                    "name": model_id,
-                    "reasoning": False,
-                    "input": ["text"],
-                    "contextWindow": 200000,
-                    "maxTokens": 8192,
+        key_ref = api_key if api_key else "dummy"
+        data: dict[str, Any] = {
+            "providers": {
+                "custom": {
+                    "baseUrl": base_url,
+                    "apiKey": key_ref,
+                    "api": "openai-completions",
+                    "models": [
+                        {
+                            "id": model_id,
+                            "name": model_id,
+                            "reasoning": False,
+                            "input": ["text"],
+                            "contextWindow": 32768,
+                            "maxTokens": 8192,
+                        }
+                    ],
                 }
-            ],
+            },
+            "defaultProvider": "custom",
+            "defaultModel": model_id,
         }
-        data["defaultProvider"] = "custom"
-        data["defaultModel"] = model_id
         bench_models.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
         logger.info(
             "Configured custom provider (%s) with model %s for agent %s",

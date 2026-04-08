@@ -57,13 +57,18 @@ _TRANSCRIPT_TMP_DIR = Path("/tmp/pinchbench_rl/transcripts")
 
 
 def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
-    """配置 openclaw 接 vLLM endpoint。"""
-    import json as _json
+    """配置 openclaw 接 vLLM endpoint。每次强制重建 agent 确保模型配置生效。"""
     import subprocess
 
     logger.info("配置 openclaw agent: %s -> %s", _RL_AGENT_ID, base_url)
     workspace = Path("/tmp/pinchbench_rl/workspace")
     workspace.mkdir(parents=True, exist_ok=True)
+
+    # 先删除旧 agent（忽略失败）
+    subprocess.run(
+        ["openclaw", "agents", "delete", _RL_AGENT_ID, "--force"],
+        capture_output=True, check=False,
+    )
 
     ensure_agent_exists(
         _RL_AGENT_ID,
