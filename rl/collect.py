@@ -65,20 +65,19 @@ def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
     workspace = Path("/tmp/pinchbench_rl/workspace")
     workspace.mkdir(parents=True, exist_ok=True)
 
-    # 动态更新 main agent 的 models.json，把 vLLM provider 写进去
-    # 这样 openclaw 才能通过 "vllm/<model>" 路由到正确的 endpoint
-    main_models_path = Path.home() / ".openclaw" / "agents" / "main" / "agent" / "models.json"
-    if main_models_path.exists():
-        try:
-            data = json.loads(main_models_path.read_text("utf-8-sig"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
-    else:
-        data = {}
-
+    # 动态更新全局 openclaw.json 里的 models.providers，把 vLLM provider 注册进去
+    # gateway 用这里的 provider 路由模型请求
+    global_config_path = Path.home() / ".openclaw" / "openclaw.json"
     provider_name = "vllm"
     model_bare = model.split("/", 1)[-1] if "/" in model else model
-    data.setdefault("providers", {})[provider_name] = {
+    if global_config_path.exists():
+        try:
+            global_cfg = json.loads(global_config_path.read_text("utf-8-sig"))
+        except (json.JSONDecodeError, OSError):
+            global_cfg = {}
+    else:
+        global_cfg = {}
+    global_cfg.setdefault("models", {}).setdefault("providers", {})[provider_name] = {
         "baseUrl": base_url,
         "apiKey": api_key or "dummy",
         "api": "openai-completions",
@@ -89,12 +88,10 @@ def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
             "input": ["text"],
             "contextWindow": 32768,
             "maxTokens": 8192,
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "api": "openai-completions",
         }],
     }
-    main_models_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
-    logger.info("已更新 main models.json: %s -> %s", provider_name, base_url)
+    global_config_path.write_text(json.dumps(global_cfg, indent=2, ensure_ascii=False), "utf-8")
+    logger.info("已注册 vllm provider 到全局 openclaw.json: %s -> %s", provider_name, base_url)
 
     # 先删除旧 agent（忽略失败）
     subprocess.run(
