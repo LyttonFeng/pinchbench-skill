@@ -2,19 +2,18 @@
 # 实验组 B：Process Reward（per-turn reward，三层规则打分）
 #
 # 用法：
-#   # Step 1：准备数据（process 模式，需要 tokenizer 计算 token span）
+#   # Step 1：准备数据（trajectory 存入 extra_info）
 #   python rl/train/prepare_data.py \
 #       --input rl/data/samples_rescored.jsonl \
 #       --output-dir rl/data/verl_process/ \
-#       --model Qwen/Qwen3-4B \
 #       --reward-mode process
 #
 #   # Step 2：跑训练
 #   bash rl/train/run_verl.sh
 #
-# 算法：GPG + per-turn process reward（参考 OpenClaw-RL step_wise 设计）
-#   - 每个 assistant turn 独立打分（immediate + next-state + terminal）
-#   - 按 token span 展开成 per-token reward tensor
+# 算法：GPG + per-turn process reward
+#   - 自定义 PinchBenchRewardManager 扫描 <|im_end|> 定位每个 turn 边界
+#   - 在每个 assistant turn 最后一个 token 赋 step reward（immediate + next-state + terminal）
 #   - 对照组见 run_verl_outcome.sh
 #
 # 依赖：
@@ -26,7 +25,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DATA_DIR="${REPO_ROOT}/rl/data/verl_process"
 OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/verl_process"
-REWARD_FN_PATH="${REPO_ROOT}/rl/train/reward_fn.py"
+REWARD_MANAGER_PATH="${REPO_ROOT}/rl/train/reward_manager.py"
 
 TRAIN_FILE="${DATA_DIR}/train.parquet"
 VAL_FILE="${DATA_DIR}/val.parquet"
@@ -83,8 +82,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
-    reward.custom_reward_function.path="${REWARD_FN_PATH}" \
-    reward.custom_reward_function.name=compute_score \
+    reward.reward_manager.path="${REWARD_MANAGER_PATH}" \
+    reward.reward_manager.name=PinchBenchRewardManager \
     trainer.critic_warmup=0 \
     trainer.logger='["console"]' \
     trainer.project_name=pinchbench_rl \
