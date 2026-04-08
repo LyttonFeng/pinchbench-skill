@@ -43,6 +43,4 @@ python -m vllm.entrypoints.openai.api_server \
     --trust-remote-code \
     --enable-prefix-caching \
     --dtype bfloat16 \
-    --enable-auto-tool-choice \
-    --tool-call-parser qwen3_xml \
-    --override-generation-config '{"thinking":false}'
+    --enable-auto-tool-choice
