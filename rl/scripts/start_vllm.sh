@@ -36,6 +36,7 @@ echo ""
 
 python -m vllm.entrypoints.openai.api_server \
     --model "${MODEL}" \
+    --served-model-name "${MODEL}" "$(basename "${MODEL}")" \
     --host "${HOST}" \
     --port "${PORT}" \
     --gpu-memory-utilization "${GPU_MEM_UTIL}" \
@@ -44,5 +45,5 @@ python -m vllm.entrypoints.openai.api_server \
     --enable-prefix-caching \
     --dtype bfloat16 \
     --enable-auto-tool-choice \
-    --tool-call-parser qwen3_xml \
+    --tool-call-parser hermes \
     --reasoning-parser deepseek_r1
