@@ -67,3 +67,7 @@ results/
 
 # Vultr deployment
 deploy/
+
+# Internal docs (do not commit)
+ROADMAP.md
+rl/data/
