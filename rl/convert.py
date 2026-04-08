@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from schema import GRPOGroup, Reward, TrainingSample, TurnMessage, UsageStats, split_for_seed
+from schema import Reward, TrainingSample, TurnMessage, UsageStats, split_for_seed
 
 
 def _parse_openclaw_transcript(path: Path) -> list[dict[str, Any]]:
