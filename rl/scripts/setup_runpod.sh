@@ -15,12 +15,11 @@ pip install -q \
     vllm \
     transformers \
     peft \
-    torch \
     accelerate \
     datasets
 
-# veRL（若需要更完整的 RL 框架）
-# pip install verl
+# veRL
+pip install -q verl
 
 echo ""
 echo "验证 GPU..."
