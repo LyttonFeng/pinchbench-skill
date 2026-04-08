@@ -44,5 +44,4 @@ python -m vllm.entrypoints.openai.api_server \
     --enable-prefix-caching \
     --dtype bfloat16 \
     --enable-auto-tool-choice \
-    --tool-call-parser qwen3 \
-    --reasoning-parser qwen3
+    --tool-call-parser qwen3_xml
