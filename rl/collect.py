@@ -58,11 +58,43 @@ _TRANSCRIPT_TMP_DIR = Path("/tmp/pinchbench_rl/transcripts")
 
 def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
     """配置 openclaw 接 vLLM endpoint。每次强制重建 agent 确保模型配置生效。"""
+    import json
     import subprocess
 
     logger.info("配置 openclaw agent: %s -> %s", _RL_AGENT_ID, base_url)
     workspace = Path("/tmp/pinchbench_rl/workspace")
     workspace.mkdir(parents=True, exist_ok=True)
+
+    # 动态更新 main agent 的 models.json，把 vLLM provider 写进去
+    # 这样 openclaw 才能通过 "vllm/<model>" 路由到正确的 endpoint
+    main_models_path = Path.home() / ".openclaw" / "agents" / "main" / "agent" / "models.json"
+    if main_models_path.exists():
+        try:
+            data = json.loads(main_models_path.read_text("utf-8-sig"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    else:
+        data = {}
+
+    provider_name = "vllm"
+    model_bare = model.split("/", 1)[-1] if "/" in model else model
+    data.setdefault("providers", {})[provider_name] = {
+        "baseUrl": base_url,
+        "apiKey": api_key or "dummy",
+        "api": "openai-completions",
+        "models": [{
+            "id": model_bare,
+            "name": model_bare,
+            "reasoning": False,
+            "input": ["text"],
+            "contextWindow": 32768,
+            "maxTokens": 8192,
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "api": "openai-completions",
+        }],
+    }
+    main_models_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+    logger.info("已更新 main models.json: %s -> %s", provider_name, base_url)
 
     # 先删除旧 agent（忽略失败）
     subprocess.run(
@@ -70,14 +102,16 @@ def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
         capture_output=True, check=False,
     )
 
+    # model 格式：vllm/<model_bare>，openclaw 据此路由到 vllm provider
+    routed_model = f"{provider_name}/{model_bare}"
     ensure_agent_exists(
         _RL_AGENT_ID,
-        model,
+        routed_model,
         workspace,
         base_url=base_url,
         api_key=api_key,
     )
-    logger.info("openclaw agent 配置完成: %s", _RL_AGENT_ID)
+    logger.info("openclaw agent 配置完成: %s (model=%s)", _RL_AGENT_ID, routed_model)
 
 
 def _load_rl_tasks(tasks_dir: Path) -> list[Task]:
