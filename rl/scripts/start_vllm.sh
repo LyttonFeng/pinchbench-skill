@@ -42,4 +42,6 @@ python -m vllm.entrypoints.openai.api_server \
     --max-model-len 32768 \
     --trust-remote-code \
     --enable-prefix-caching \
-    --dtype bfloat16
+    --dtype bfloat16 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes
