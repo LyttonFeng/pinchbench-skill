@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
-# 实验组 B：Process Reward（per-turn reward，三层规则打分）
+# 对照组 A：Outcome Reward（terminal reward 广播到所有 token）
 #
 # 用法：
-#   # Step 1：准备数据（process 模式，需要 tokenizer 计算 token span）
+#   # Step 1：准备数据（outcome 模式，不需要 tokenizer）
 #   python rl/train/prepare_data.py \
 #       --input rl/data/samples_rescored.jsonl \
-#       --output-dir rl/data/verl_process/ \
-#       --model Qwen/Qwen3-4B \
-#       --reward-mode process
+#       --output-dir rl/data/verl_outcome/ \
+#       --reward-mode outcome
 #
 #   # Step 2：跑训练
-#   bash rl/train/run_verl.sh
-#
-# 算法：GPG + per-turn process reward（参考 OpenClaw-RL step_wise 设计）
-#   - 每个 assistant turn 独立打分（immediate + next-state + terminal）
-#   - 按 token span 展开成 per-token reward tensor
-#   - 对照组见 run_verl_outcome.sh
+#   bash rl/train/run_verl_outcome.sh
 #
 # 依赖：
 #   pip install verl vllm transformers peft
@@ -24,8 +18,8 @@ set -euo pipefail
 
 # ── 路径配置 ──────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-DATA_DIR="${REPO_ROOT}/rl/data/verl_process"
-OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/verl_process"
+DATA_DIR="${REPO_ROOT}/rl/data/verl_outcome"
+OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/verl_outcome"
 REWARD_FN_PATH="${REPO_ROOT}/rl/train/reward_fn.py"
 
 TRAIN_FILE="${DATA_DIR}/train.parquet"
@@ -88,7 +82,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger='["console"]' \
     trainer.project_name=pinchbench_rl \
-    trainer.experiment_name="qwen3_4b_gpg_process_$(date +%Y%m%d_%H%M)" \
+    trainer.experiment_name="qwen3_4b_gpg_outcome_$(date +%Y%m%d_%H%M)" \
     trainer.n_gpus_per_node="${N_GPUS}" \
     trainer.nnodes=1 \
     trainer.save_freq=50 \

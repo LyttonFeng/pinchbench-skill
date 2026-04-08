@@ -20,6 +20,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -62,7 +63,50 @@ def _build_prompt(trajectory: list[TurnMessage]) -> list[dict]:
     return messages
 
 
-def sample_to_verl_row(sample: TrainingSample) -> dict:
+def _compute_step_token_spans(
+    trajectory: list[TurnMessage],
+    tokenizer: Any,
+) -> tuple[list[dict], int]:
+    """
+    计算每个 assistant turn 在 response token 序列中的起止位置。
+
+    参考 OpenClaw-RL 的 step_action_spans 实现：
+      - response = 从第一个 assistant turn 到最后，拼接所有 turn 的文本
+      - 记录每个 assistant turn 对应的 [token_start, token_end)
+
+    Returns:
+        (step_token_spans, total_response_tokens)
+        step_token_spans: [{"turn_index": i, "token_start": int, "token_end": int}, ...]
+    """
+    spans = []
+    token_pos = 0
+
+    for i, turn in enumerate(trajectory):
+        if turn.role == "assistant":
+            text = turn.content or ""
+            if turn.tool_calls:
+                tc_str = json.dumps(
+                    [{"name": tc.name, "arguments": tc.arguments} for tc in turn.tool_calls],
+                    ensure_ascii=False,
+                )
+                text = f"{text}\n[TOOL_CALLS]{tc_str}".strip()
+            token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+            n = len(token_ids)
+            spans.append({
+                "turn_index": i,
+                "token_start": token_pos,
+                "token_end": token_pos + n,
+            })
+            token_pos += n
+        elif turn.role == "tool":
+            text = turn.content or ""
+            token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+            token_pos += len(token_ids)
+
+    return spans, token_pos
+
+
+def sample_to_verl_row(sample: TrainingSample, tokenizer: Any = None, reward_mode: str = "process") -> dict:
     """
     把一条 TrainingSample 转成 veRL parquet 的一行。
 
@@ -85,6 +129,23 @@ def sample_to_verl_row(sample: TrainingSample) -> dict:
 
     prompt = _build_prompt(prompt_turns)
 
+    # 计算 step_token_spans（process reward 必需）
+    step_token_spans = None
+    total_response_tokens = None
+    if tokenizer is not None and reward_mode == "process":
+        # 只对第一个 assistant turn 之后的 trajectory 计算 spans
+        first_assistant = next(
+            (i for i, t in enumerate(sample.trajectory) if t.role == "assistant"), None
+        )
+        if first_assistant is not None:
+            response_trajectory = sample.trajectory[first_assistant:]
+            step_token_spans, total_response_tokens = _compute_step_token_spans(
+                response_trajectory, tokenizer
+            )
+            # turn_index 需要加上 first_assistant 的偏移，对应 trajectory 中的绝对位置
+            for span in step_token_spans:
+                span["turn_index"] += first_assistant
+
     # extra_info 透传给 reward_fn
     extra_info = {
         "sample_id": sample.sample_id,
@@ -93,8 +154,12 @@ def sample_to_verl_row(sample: TrainingSample) -> dict:
         "grading_type": sample.grading_type,
         "terminal_reward": sample.reward.terminal,
         "reward_breakdown": sample.reward.breakdown,
+        "reward_mode": reward_mode,
         # 完整 trajectory 供 reward_fn 做 next-state 判断
         "trajectory": [t.to_dict() for t in sample.trajectory],
+        # process reward 必需
+        "step_token_spans": step_token_spans,
+        "total_response_tokens": total_response_tokens,
     }
 
     return {
@@ -114,6 +179,8 @@ def convert(
     output_dir: Path,
     val_ratio: float = 0.1,
     split_filter: str | None = "train",
+    model_path: str | None = None,
+    reward_mode: str = "process",
 ) -> None:
     """
     读取 JSONL，转成 veRL parquet，按 train/val split。
@@ -138,9 +205,20 @@ def convert(
         print("没有可用样本，检查输入文件和过滤条件")
         sys.exit(1)
 
-    print(f"加载 {len(samples)} 条样本")
+    print(f"加载 {len(samples)} 条样本，reward_mode={reward_mode}")
 
-    rows = [sample_to_verl_row(s) for s in samples]
+    # 加载 tokenizer（process reward 需要计算 token span）
+    tokenizer = None
+    if model_path and reward_mode == "process":
+        try:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            print(f"加载 tokenizer: {model_path}")
+        except Exception as e:
+            print(f"tokenizer 加载失败，fallback 到 outcome mode: {e}")
+            reward_mode = "outcome"
+
+    rows = [sample_to_verl_row(s, tokenizer=tokenizer, reward_mode=reward_mode) for s in samples]
 
     # train/val split
     n_val = max(1, int(len(rows) * val_ratio))
@@ -165,6 +243,8 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("rl/data/verl"), help="输出目录")
     parser.add_argument("--val-ratio", type=float, default=0.1, help="验证集比例（默认 0.1）")
     parser.add_argument("--split", default="train", help="只处理指定 split（默认 train）")
+    parser.add_argument("--model", default=None, help="tokenizer 路径，process reward 必需（如 Qwen/Qwen3-4B）")
+    parser.add_argument("--reward-mode", default="process", choices=["outcome", "process"], help="reward 模式（默认 process）")
     args = parser.parse_args()
 
     convert(
@@ -172,6 +252,8 @@ def main() -> None:
         output_dir=args.output_dir,
         val_ratio=args.val_ratio,
         split_filter=args.split,
+        model_path=args.model,
+        reward_mode=args.reward_mode,
     )
 
 
