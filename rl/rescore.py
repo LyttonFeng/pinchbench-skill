@@ -8,7 +8,7 @@ openclaw 采样时不暴露 token logprobs，需要用 vLLM 对每个 assistant 
     python rl/rescore.py \
         --input rl/data/samples_raw.jsonl \
         --output rl/data/samples_rescored.jsonl \
-        --model Qwen/Qwen3-1.7B \
+        --model Qwen/Qwen3-4B \
         --base-url http://localhost:8000/v1
 
 原理：
@@ -226,7 +226,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="vLLM re-score：补全 TrainingSample 的 logprobs")
     parser.add_argument("--input", type=Path, required=True, help="输入 JSONL（samples_raw）")
     parser.add_argument("--output", type=Path, required=True, help="输出 JSONL（samples_rescored）")
-    parser.add_argument("--model", required=True, help="模型 ID，如 Qwen/Qwen3-1.7B")
+    parser.add_argument("--model", required=True, help="模型 ID，如 Qwen/Qwen3-4B")
     parser.add_argument(
         "--base-url",
         default="http://localhost:8000/v1",

@@ -30,7 +30,7 @@ TRAIN_FILE="${DATA_DIR}/train.parquet"
 VAL_FILE="${DATA_DIR}/val.parquet"
 
 # ── 模型配置 ──────────────────────────────────────────────
-MODEL="${VERL_MODEL:-Qwen/Qwen3-1.7B}"
+MODEL="${VERL_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${VERL_N_GPUS:-1}"      # L4 单卡即可
 
 echo "=============================="

@@ -7,7 +7,7 @@ veRL single-sample PG 训练脚本。
 用法（RunPod A100 上执行）：
     python rl/train/train.py \
         --data rl/data/samples_rescored.jsonl \
-        --model Qwen/Qwen3-1.7B \
+        --model Qwen/Qwen3-4B \
         --output rl/checkpoints/
 
 依赖：

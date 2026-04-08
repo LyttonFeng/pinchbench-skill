@@ -13,7 +13,7 @@ PinchBench 的每个 task 对应一个真实用户请求场景：
 
 ```
 task prompt（用户请求）
-    → openclaw + Qwen3-1.7B 执行一次
+    → openclaw + Qwen3-4B 执行一次
     → transcript（真实 tool call 序列）
     → grading 打 terminal reward [0, 1]
     → vLLM re-score 补 logprobs
@@ -25,7 +25,7 @@ task prompt（用户请求）
 | 组件 | 说明 |
 |------|------|
 | openclaw | agent 执行环境（本地 Mac） |
-| Qwen3-1.7B | 训练目标模型（开源权重） |
+| Qwen3-4B | 训练目标模型（开源权重） |
 | vLLM | 推理服务 + re-score logprobs（RunPod） |
 | veRL | RL 训练框架（RunPod A100） |
 | PinchBench | 采样环境 + 评测集 |
@@ -60,7 +60,7 @@ rl/
   "split": "train",
   "seed": 42,
   "run_index": 0,
-  "model_id": "Qwen/Qwen3-1.7B",
+  "model_id": "Qwen/Qwen3-4B",
   "prompt": "...",
   "grading_type": "automated",
   "trajectory": [
@@ -151,7 +151,7 @@ A_t = r_t - V_φ(h_t)   # critic baseline 降方差
 ```bash
 # RunPod 上执行
 bash rl/scripts/setup_runpod.sh
-bash rl/scripts/start_vllm.sh Qwen/Qwen3-1.7B
+bash rl/scripts/start_vllm.sh Qwen/Qwen3-4B
 ```
 
 ### Step 2：配置 openclaw 接 vLLM
@@ -160,7 +160,7 @@ bash rl/scripts/start_vllm.sh Qwen/Qwen3-1.7B
 # 本地 Mac，把 openclaw 的模型换成 RunPod vLLM
 python rl/collect.py --setup \
   --base-url http://<runpod-ip>:8000/v1 \
-  --model Qwen/Qwen3-1.7B
+  --model Qwen/Qwen3-4B
 ```
 
 ### Step 3：采样 training task
@@ -170,7 +170,7 @@ python rl/collect.py --setup \
 python rl/collect.py \
   --tasks-dir rl/tasks \
   --base-url http://<runpod-ip>:8000/v1 \
-  --model Qwen/Qwen3-1.7B \
+  --model Qwen/Qwen3-4B \
   --output rl/data/samples_raw.jsonl
 ```
 
@@ -181,7 +181,7 @@ python rl/collect.py \
 python rl/rescore.py \
   --input rl/data/samples_raw.jsonl \
   --output rl/data/samples_rescored.jsonl \
-  --model Qwen/Qwen3-1.7B \
+  --model Qwen/Qwen3-4B \
   --base-url http://localhost:8000/v1
 ```
 
@@ -191,7 +191,7 @@ python rl/rescore.py \
 # RunPod 上执行
 python rl/train/train.py \
   --data rl/data/samples_rescored.jsonl \
-  --model Qwen/Qwen3-1.7B \
+  --model Qwen/Qwen3-4B \
   --output rl/checkpoints/
 ```
 
@@ -200,7 +200,7 @@ python rl/train/train.py \
 ```bash
 # 本地 Mac，更新 openclaw 用新 checkpoint
 ./scripts/run.sh \
-  --model Qwen3-1.7B-finetuned \
+  --model Qwen3-4B-finetuned \
   --base-url http://<runpod-ip>:8000/v1 \
   --no-upload \
   --suite automated-only

@@ -2,16 +2,16 @@
 # RunPod 上启动 vLLM serve
 #
 # 用法：
-#   bash rl/scripts/start_vllm.sh Qwen/Qwen3-1.7B
-#   bash rl/scripts/start_vllm.sh Qwen/Qwen3-1.7B --port 8001
+#   bash rl/scripts/start_vllm.sh Qwen/Qwen3-4B
+#   bash rl/scripts/start_vllm.sh Qwen/Qwen3-4B --port 8001
 #
 # 启动后 openclaw 配置：
 #   --base-url http://<runpod-ip>:8000/v1
-#   --model Qwen/Qwen3-1.7B
+#   --model Qwen/Qwen3-4B
 
 set -euo pipefail
 
-MODEL="${1:-Qwen/Qwen3-1.7B}"
+MODEL="${1:-Qwen/Qwen3-4B}"
 PORT="${2:-8000}"
 HOST="0.0.0.0"
 
@@ -27,7 +27,7 @@ if ! python -c "import vllm" 2>/dev/null; then
     pip install vllm -q
 fi
 
-# GPU 内存分配（Qwen3-1.7B 在单张 A100 上很宽裕）
+# GPU 内存分配（Qwen3-4B 推理约 9GB，L4 24GB 够用）
 GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.85}"
 
 echo ""
