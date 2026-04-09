@@ -1,0 +1,22 @@
+# OpenClaw Agent Loop configuration for veRL
+#
+# Usage in veRL training config:
+#   actor_rollout_ref.rollout.agent_loop.agent_loop_config_path=rl/agent_loop/config.yaml
+#   actor_rollout_ref.rollout.agent_loop.default_agent_loop=openclaw_agent
+
+- name: openclaw_agent
+  _target_: rl.agent_loop.openclaw_agent_loop.OpenClawAgentLoop
+  config:
+    host: ${oc.env:OPENCLAW_HOST,localhost}
+    user: ${oc.env:OPENCLAW_USER,root}
+    ssh_key: ${oc.env:OPENCLAW_SSH_KEY,~/.ssh/id_ed25519}
+    ssh_port: ${oc.env:OPENCLAW_PORT,22}
+    workspace_base: ${oc.env:OPENCLAW_WORKSPACE,/tmp/pinchbench}
+    pinchbench_dir: ${oc.env:PINCHBENCH_DIR,}
+    judge_model: ${oc.env:JUDGE_MODEL,qwen-plus}
+    judge_base_url: ${oc.env:JUDGE_BASE_URL,https://dashscope.aliyuncs.com/compatible-mode/v1}
+    judge_api_key: ${oc.env:JUDGE_API_KEY,}
+    reward_mode: ${oc.env:REWARD_MODE,oracle}
+    proxy_bind_host: ${oc.env:PROXY_BIND_HOST,0.0.0.0}
+    agent_timeout: 600.0
+    max_turns: 30

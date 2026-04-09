@@ -1,24 +1,33 @@
 """
 PinchBench custom reward manager for veRL.
 
-替换 veRL 默认的 naive reward manager，实现 step-level process reward：
-  - 找到 response token 序列中每个 assistant turn 的最后一个 token（<|im_end|>）
-  - 在该位置赋该 step 的 reward（immediate + next-state + terminal）
-  - 其余位置 reward = 0
+Online RL 版本：
+  - 从 extra_info 中获取 trajectory 和 task_id
+  - 调用 agent_loop/reward.py 计算 per-turn process reward
+  - 在 <|im_end|> 位置赋 process reward
+  - 最后一个 turn 叠加 terminal reward {-1, +1}
 
-参考：
-  - verl/workers/reward_manager/naive.py（接口结构）
-  - OpenClaw-RL generate_with_retool.py（step_action_spans 思路）
+Reward 量级：
+  - process reward: [-0.5, +0.3] per turn
+  - terminal reward: {-1, +1}
 
-使用方式（run_verl.sh 里）：
+三组 ablation (由 REWARD_MODE 环境变量控制)：
+  - baseline: 纯 terminal reward
+  - rule:     通用行为规则 + terminal
+  - oracle:   规则 + 天眼 reference trajectory + terminal
+
+使用方式（run_grpo_lora.sh 里）：
   reward.reward_manager.path=rl/train/reward_manager.py
   reward.reward_manager.name=PinchBenchRewardManager
 """
 
 from __future__ import annotations
 
-import re
+import json
+import os
+import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -26,90 +35,16 @@ import torch
 from verl.protocol import DataProto
 from verl.workers.reward_manager.abstract import AbstractRewardManager
 
+# Add agent_loop to path for reward computation
+_AGENT_LOOP_DIR = str(Path(__file__).parent.parent / "agent_loop")
+if _AGENT_LOOP_DIR not in sys.path:
+    sys.path.insert(0, _AGENT_LOOP_DIR)
 
-# ---------- 规则 reward（和 reward_fn.py 保持一致）----------
-
-_R_NEXT_ERROR = -0.5
-_R_NEXT_EMPTY = -0.1
-_R_NEXT_OK = +0.2
-
-_HALLUCINATION_PATTERNS = [
-    r"I don't have access to",
-    r"I cannot access",
-    r"As an AI",
-    r"I'm unable to",
-    r"I don't have the ability",
-]
-
-_TOOL_ERROR_PATTERNS = [
-    r"Traceback \(most recent call last\)",
-    r"Error:",
-    r"error:",
-    r"Exception:",
-    r"command not found",
-    r"No such file or directory",
-    r"Permission denied",
-    r"ModuleNotFoundError",
-    r"FileNotFoundError",
-]
-
-
-def _immediate_reward(content: str, has_tool_call: bool) -> float:
-    if not content.strip() and not has_tool_call:
-        return -1.0
-    for pattern in _HALLUCINATION_PATTERNS:
-        if re.search(pattern, content, re.IGNORECASE):
-            return -1.0
-    return 0.0
-
-
-def _next_state_reward(tool_content: str) -> float:
-    if not tool_content.strip():
-        return _R_NEXT_EMPTY
-    for pattern in _TOOL_ERROR_PATTERNS:
-        if re.search(pattern, tool_content):
-            return _R_NEXT_ERROR
-    return _R_NEXT_OK
-
-
-def _compute_step_rewards(
-    trajectory: list[dict],
-    terminal_reward: float,
-) -> list[float]:
-    """
-    计算每个 assistant turn 的 step reward，返回顺序与 assistant turn 在
-    trajectory 中的顺序一致。
-    """
-    step_rewards = []
-    for i, turn in enumerate(trajectory):
-        if turn.get("role") != "assistant":
-            continue
-        content = turn.get("content", "")
-        has_tool_call = bool(turn.get("tool_calls"))
-        r_imm = _immediate_reward(content, has_tool_call)
-        if r_imm == -1.0:
-            step_rewards.append(-1.0)
-            continue
-        r_next_list = []
-        j = i + 1
-        while j < len(trajectory) and trajectory[j].get("role") == "tool":
-            r_next_list.append(_next_state_reward(trajectory[j].get("content", "")))
-            j += 1
-        r_next = sum(r_next_list) / len(r_next_list) if r_next_list else 0.0
-        step_rewards.append(r_next + terminal_reward)
-    return step_rewards
-
-
-# ---------- token 边界定位 ----------
 
 def _find_im_end_positions(
     response_ids: torch.Tensor,
     im_end_token_id: int,
 ) -> list[int]:
-    """
-    在 response token 序列里找到所有 <|im_end|> 的位置。
-    每个位置对应一个 turn 的结束。
-    """
     positions = []
     for pos, tid in enumerate(response_ids.tolist()):
         if tid == im_end_token_id:
@@ -117,20 +52,8 @@ def _find_im_end_positions(
     return positions
 
 
-# ---------- Custom Reward Manager ----------
-
 class PinchBenchRewardManager(AbstractRewardManager):
-    """
-    Step-level process reward manager for PinchBench RL.
-
-    对每个 assistant turn 的最后一个 token（<|im_end|>）赋该 step 的 reward：
-      r_step = immediate + next_state + terminal
-
-    其余 token 的 reward = 0。
-
-    若 extra_info 里没有 trajectory（outcome 模式），退化为：
-      最后一个 token 赋 terminal_reward。
-    """
+    """Per-turn process reward manager for PinchBench Online RL."""
 
     def __init__(
         self,
@@ -143,8 +66,8 @@ class PinchBenchRewardManager(AbstractRewardManager):
         self.tokenizer = tokenizer
         self.num_examine = num_examine
         self.reward_fn_key = reward_fn_key
+        self.reward_mode = os.environ.get("REWARD_MODE", "oracle")
 
-        # 获取 <|im_end|> 的 token id
         im_end_ids = tokenizer.encode("<|im_end|>", add_special_tokens=False)
         self.im_end_token_id = im_end_ids[-1] if im_end_ids else None
 
@@ -153,8 +76,10 @@ class PinchBenchRewardManager(AbstractRewardManager):
         data: DataProto,
         return_dict: bool = False,
     ) -> torch.Tensor | dict[str, Any]:
+        from reward import compute_episode_rewards
+
         reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)
-        reward_extra_info = defaultdict(list)
+        reward_extra_info: dict[str, list] = defaultdict(list)
 
         for i in range(len(data)):
             data_item = data[i]
@@ -166,50 +91,66 @@ class PinchBenchRewardManager(AbstractRewardManager):
             valid_response_length = int(attention_mask[prompt_length:].sum().item())
             response_ids = data_item.batch["responses"][:valid_response_length]
 
-            # extra_info 里拿 trajectory 和 terminal_reward
             extra_info = data_item.non_tensor_batch.get("extra_info", {})
             if isinstance(extra_info, str):
-                import json
                 try:
                     extra_info = json.loads(extra_info)
                 except Exception:
                     extra_info = {}
 
             trajectory = extra_info.get("trajectory", [])
-            terminal_reward = float(extra_info.get("terminal_reward", 0.0))
-            reward_mode = extra_info.get("reward_mode", "process")
+            task_id = extra_info.get("task_id", "")
+            terminal_success = bool(extra_info.get("terminal_success", False))
+            reward_mode = extra_info.get("reward_mode", self.reward_mode)
 
-            if not trajectory or reward_mode == "outcome" or self.im_end_token_id is None:
-                # fallback：outcome reward，放在最后一个 token
+            terminal_reward = 1.0 if terminal_success else -1.0
+
+            if not trajectory or self.im_end_token_id is None:
+                reward_tensor[i, valid_response_length - 1] = terminal_reward
+                reward_extra_info["terminal_reward"].append(terminal_reward)
+                reward_extra_info["reward_mode"].append("fallback")
+                continue
+
+            # Compute per-turn rewards using the rubric engine
+            per_turn_rewards = compute_episode_rewards(
+                trajectory, terminal_success, task_id, mode=reward_mode,
+            )
+
+            if not per_turn_rewards:
                 reward_tensor[i, valid_response_length - 1] = terminal_reward
                 reward_extra_info["terminal_reward"].append(terminal_reward)
                 continue
 
-            # 计算每个 assistant turn 的 step reward
-            step_rewards = _compute_step_rewards(trajectory, terminal_reward)
-
-            if not step_rewards:
-                reward_tensor[i, valid_response_length - 1] = terminal_reward
-                continue
-
-            # 找 <|im_end|> 位置，每个位置对应一个 turn 结束
+            # Find <|im_end|> positions for reward assignment
             im_end_positions = _find_im_end_positions(response_ids, self.im_end_token_id)
 
-            # 只取 assistant turn 数量的位置（可能有 user/tool turn 的 <|im_end|>）
-            # 按顺序取前 len(step_rewards) 个
-            n = min(len(step_rewards), len(im_end_positions))
+            # Filter to only model-generated positions (if mask available)
+            response_mask = data_item.batch.get("response_mask")
+            if response_mask is not None:
+                im_end_positions = [
+                    pos for pos in im_end_positions
+                    if pos < len(response_mask) and response_mask[pos] == 1
+                ]
+
+            n = min(len(per_turn_rewards), len(im_end_positions))
             for k in range(n):
                 pos = im_end_positions[k]
                 if pos < valid_response_length:
-                    reward_tensor[i, pos] = step_rewards[k]
+                    reward_tensor[i, pos] = per_turn_rewards[k]
 
-            # 如果 im_end 数量不够，把最后一个 step reward 放在最后一个 token
-            if n < len(step_rewards):
-                reward_tensor[i, valid_response_length - 1] += step_rewards[-1]
+            # Leftover rewards on last valid token
+            if n < len(per_turn_rewards):
+                leftover = sum(per_turn_rewards[n:])
+                reward_tensor[i, valid_response_length - 1] += leftover
 
             reward_extra_info["terminal_reward"].append(terminal_reward)
-            reward_extra_info["n_steps"].append(n)
-            reward_extra_info["step_rewards"].append(step_rewards[:n])
+            reward_extra_info["n_turns"].append(len(per_turn_rewards))
+            reward_extra_info["per_turn_rewards"].append(per_turn_rewards[:n])
+            reward_extra_info["reward_mode"].append(reward_mode)
+            reward_extra_info["task_id"].append(task_id)
+            reward_extra_info["total_process_reward"].append(
+                sum(per_turn_rewards) - terminal_reward
+            )
 
         if return_dict:
             return {
