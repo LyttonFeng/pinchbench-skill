@@ -62,12 +62,12 @@ dmypy.json
 
 # Project specific
 uv.lock
-results/
+results/*
+!results/*.md
 .pinchbench/
 
 # Vultr deployment
 deploy/
 
-# Internal docs (do not commit)
-ROADMAP.md
+# Project docs
 rl/data/
