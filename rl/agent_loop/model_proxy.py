@@ -5,7 +5,7 @@ and forwards them to veRL's vLLM inference engine.
 Architecture:
   OpenClaw agent → POST /v1/chat/completions → ModelProxy (aiohttp)
   ModelProxy → asyncio.Queue → OpenClawAgentLoop → veRL server_manager.generate()
-  veRL response → ModelProxy → OpenAI-format JSON → OpenClaw agent
+  veRL response → ModelProxy → OpenAI-format SSE stream → OpenClaw agent
 
 Based on veRL's SWE-Agent recipe ModelProxy pattern.
 """
@@ -47,6 +47,9 @@ class ModelRequest:
 class ModelProxy:
     """HTTP proxy server that intercepts OpenClaw's LLM calls.
 
+    Supports both streaming (SSE) and non-streaming responses.
+    OpenClaw always sends stream=true, so streaming is the primary path.
+
     Lifecycle:
         proxy = ModelProxy()
         await proxy.start()       # binds to ephemeral port
@@ -77,7 +80,6 @@ class ModelProxy:
         self._site = web.TCPSite(self._runner, self.host, self.port)
         await self._site.start()
 
-        # Resolve actual port (when port=0, OS assigns ephemeral port)
         sockets = self._site._server.sockets  # type: ignore[union-attr]
         if sockets:
             self.port = sockets[0].getsockname()[1]
@@ -121,14 +123,15 @@ class ModelProxy:
             request_id=f"proxy-{uuid.uuid4().hex[:12]}",
             messages=body.get("messages", []),
             temperature=body.get("temperature", 0.7),
-            max_tokens=body.get("max_tokens", 4096),
+            max_tokens=body.get("max_tokens", body.get("max_completion_tokens", 4096)),
             tools=body.get("tools"),
             tool_choice=body.get("tool_choice"),
         )
 
         await self._queue.put(req)
         logger.debug(
-            "Queued request %s (%d messages)", req.request_id, len(req.messages)
+            "Queued request %s (%d messages, stream=%s)",
+            req.request_id, len(req.messages), body.get("stream", False),
         )
 
         try:
@@ -143,34 +146,113 @@ class ModelProxy:
                 {"error": {"message": req.response_error}}, status=500
             )
 
-        message: dict[str, Any] = {"role": "assistant"}
+        is_stream = body.get("stream", False)
+        model_name = body.get("model", "verl-proxy")
 
+        if is_stream:
+            return await self._stream_response(request, req, model_name)
+        return self._json_response(req, model_name)
+
+    def _json_response(self, req: ModelRequest, model: str) -> web.Response:
+        message: dict[str, Any] = {"role": "assistant", "content": req.response_text or ""}
         if req.response_tool_calls:
-            message["content"] = req.response_text or ""
             message["tool_calls"] = req.response_tool_calls
-        else:
-            message["content"] = req.response_text or ""
 
-        response_body = {
+        body = {
             "id": req.request_id,
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": body.get("model", "verl-proxy"),
-            "choices": [
-                {
-                    "index": 0,
-                    "message": message,
-                    "finish_reason": req.finish_reason,
-                }
-            ],
+            "model": model,
+            "choices": [{"index": 0, "message": message, "finish_reason": req.finish_reason}],
             "usage": req.response_usage or {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
             },
         }
+        return web.json_response(body)
 
-        return web.json_response(response_body)
+    async def _stream_response(
+        self, http_request: web.Request, req: ModelRequest, model: str,
+    ) -> web.StreamResponse:
+        """Return an SSE stream matching the OpenAI chat.completions streaming format."""
+        resp = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await resp.prepare(http_request)
+
+        created = int(time.time())
+        content = req.response_text or ""
+
+        # Chunk 1: role delta
+        chunk_role = {
+            "id": req.request_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": ""},
+                "finish_reason": None,
+            }],
+        }
+        await resp.write(f"data: {json.dumps(chunk_role)}\n\n".encode())
+
+        # Chunk 2: content delta (send full content in one chunk for simplicity)
+        chunk_content = {
+            "id": req.request_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {"content": content},
+                "finish_reason": None,
+            }],
+        }
+        await resp.write(f"data: {json.dumps(chunk_content)}\n\n".encode())
+
+        # Chunk 3: tool calls (if any)
+        if req.response_tool_calls:
+            for tc in req.response_tool_calls:
+                chunk_tool = {
+                    "id": req.request_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"tool_calls": [tc]},
+                        "finish_reason": None,
+                    }],
+                }
+                await resp.write(f"data: {json.dumps(chunk_tool)}\n\n".encode())
+
+        # Chunk 4: finish
+        chunk_done = {
+            "id": req.request_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": req.finish_reason,
+            }],
+            "usage": req.response_usage or {
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            },
+        }
+        await resp.write(f"data: {json.dumps(chunk_done)}\n\n".encode())
+
+        # Final sentinel
+        await resp.write(b"data: [DONE]\n\n")
+        await resp.write_eof()
+        return resp
 
     async def _handle_list_models(self, request: web.Request) -> web.Response:
         return web.json_response({
