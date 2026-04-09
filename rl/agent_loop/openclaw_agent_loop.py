@@ -323,11 +323,23 @@ class OpenClawAgentLoop(AgentLoopBase):
             "defaultProvider": "verl", "defaultModel": "verl/verl-proxy",
         }
         (agent_dir / "models.json").write_text(json.dumps(models, indent=2), "utf-8")
+        auth = {
+            "version": 1,
+            "profiles": {
+                "verl-default": {
+                    "type": "api_key",
+                    "key": "dummy",
+                    "provider": "verl",
+                }
+            },
+        }
+        (agent_dir / "auth-profiles.json").write_text(json.dumps(auth, indent=2), "utf-8")
         sessions_file = Path.home() / ".openclaw" / "agents" / agent_id / "sessions" / "sessions.json"
         if sessions_file.exists():
             sessions_file.unlink()
 
     def _build_remote_setup(self, agent_id: str, proxy_url: str, workspace: str, task_id: str) -> str:
+        import base64
         models_json = json.dumps({
             "providers": {"verl": {
                 "baseUrl": proxy_url, "apiKey": "dummy", "api": "openai-completions",
@@ -335,14 +347,25 @@ class OpenClawAgentLoop(AgentLoopBase):
             }},
             "defaultProvider": "verl", "defaultModel": "verl/verl-proxy",
         }, indent=2)
+        auth_json = json.dumps({
+            "version": 1,
+            "profiles": {
+                "verl-default": {
+                    "type": "api_key",
+                    "key": "dummy",
+                    "provider": "verl",
+                }
+            },
+        }, indent=2)
         agent_dir = f"$HOME/.openclaw/agents/{agent_id}/agent"
-        import base64
-        b64 = base64.b64encode(models_json.encode()).decode()
+        b64_models = base64.b64encode(models_json.encode()).decode()
+        b64_auth = base64.b64encode(auth_json.encode()).decode()
         return " && ".join([
             f"mkdir -p {workspace}",
             f"openclaw agents add {agent_id} --model verl/verl-proxy --workspace {workspace} --non-interactive 2>/dev/null || true",
             f"mkdir -p {agent_dir}",
-            f"echo {b64} | base64 -d > {agent_dir}/models.json",
+            f"echo {b64_models} | base64 -d > {agent_dir}/models.json",
+            f"echo {b64_auth} | base64 -d > {agent_dir}/auth-profiles.json",
             f"rm -f $HOME/.openclaw/agents/{agent_id}/sessions/sessions.json",
         ])
 
