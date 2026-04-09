@@ -40,7 +40,7 @@ async def forward_to_vllm(messages: list, tools: list | None, max_tokens: int = 
     payload = {
         "model": VLLM_MODEL,
         "messages": messages,
-        "max_tokens": max_tokens,
+        "max_tokens": min(max_tokens, 4096),
         "temperature": 0.7,
     }
 
