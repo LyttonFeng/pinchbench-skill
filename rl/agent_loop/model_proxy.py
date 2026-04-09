@@ -129,9 +129,10 @@ class ModelProxy:
         )
 
         await self._queue.put(req)
-        logger.debug(
-            "Queued request %s (%d messages, stream=%s)",
+        logger.info(
+            "Queued request %s (%d messages, stream=%s, tools=%d)",
             req.request_id, len(req.messages), body.get("stream", False),
+            len(body.get("tools") or []),
         )
 
         try:
@@ -148,6 +149,14 @@ class ModelProxy:
 
         is_stream = body.get("stream", False)
         model_name = body.get("model", "verl-proxy")
+
+        logger.info(
+            "Responding to %s: stream=%s, tool_calls=%d, content_len=%d, finish=%s",
+            req.request_id, is_stream,
+            len(req.response_tool_calls or []),
+            len(req.response_text or ""),
+            req.finish_reason,
+        )
 
         if is_stream:
             return await self._stream_response(request, req, model_name)
@@ -195,7 +204,9 @@ class ModelProxy:
         has_tool_calls = bool(req.response_tool_calls)
 
         async def _send(data: dict) -> None:
-            await resp.write(f"data: {json.dumps(data)}\n\n".encode())
+            payload = f"data: {json.dumps(data)}\n\n"
+            logger.debug("[SSE %s] %s", req.request_id, payload.strip()[:300])
+            await resp.write(payload.encode())
 
         def _chunk(delta: dict, finish_reason: str | None = None) -> dict:
             c: dict = {
@@ -211,33 +222,24 @@ class ModelProxy:
         await _send(_chunk({"role": "assistant"}))
 
         if has_tool_calls:
-            # OpenAI spec: each tool_call is sent as two chunks:
-            #   1) index + id + type + function.name + function.arguments=""
-            #   2) index + function.arguments=<full args>
             for i, tc in enumerate(req.response_tool_calls):
                 func = tc.get("function", {})
-                # First chunk: metadata
+                args_str = func.get("arguments", "{}")
+                # Send each tool call as a single chunk with all fields.
+                # OpenClaw's streaming parser starts a new toolCall block
+                # when it sees a chunk with an id.
                 await _send(_chunk({"tool_calls": [{
                     "index": i,
                     "id": tc.get("id", f"call_{i}"),
                     "type": "function",
-                    "function": {"name": func.get("name", ""), "arguments": ""},
-                }]}))
-                # Second chunk: arguments
-                await _send(_chunk({"tool_calls": [{
-                    "index": i,
-                    "function": {"arguments": func.get("arguments", "{}")},
+                    "function": {
+                        "name": func.get("name", ""),
+                        "arguments": args_str,
+                    },
                 }]}))
 
-            # Send any text content before finish (some models include thinking text)
-            content = req.response_text or ""
-            if content:
-                await _send(_chunk({"content": content}))
-
-            # Finish with tool_calls
             await _send(_chunk({}, finish_reason="tool_calls"))
         else:
-            # Normal text response
             content = req.response_text or ""
             if content:
                 await _send(_chunk({"content": content}))

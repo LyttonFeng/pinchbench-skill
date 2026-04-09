@@ -237,6 +237,13 @@ class OpenClawAgentLoop(AgentLoopBase):
                             turn_count, bool(tool_calls),
                             "tool_calls" if tool_calls else "stop",
                             len(content_for_openclaw))
+                if tool_calls:
+                    for i, tc in enumerate(tool_calls):
+                        f = tc.get("function", {})
+                        logger.info("[run]   tc[%d] id=%s name=%s args_len=%d args_preview=%.200s",
+                                    i, tc.get("id"), f.get("name"), len(f.get("arguments", "")),
+                                    f.get("arguments", ""))
+                logger.info("[run] raw_text_preview=%.300s", response_text[:300] if response_text else "")
 
                 req.response_text = content_for_openclaw
                 req.response_tool_calls = tool_calls
