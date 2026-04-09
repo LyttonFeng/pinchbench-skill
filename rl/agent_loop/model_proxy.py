@@ -173,7 +173,13 @@ class ModelProxy:
     async def _stream_response(
         self, http_request: web.Request, req: ModelRequest, model: str,
     ) -> web.StreamResponse:
-        """Return an SSE stream matching the OpenAI chat.completions streaming format."""
+        """Return an SSE stream matching the OpenAI chat.completions streaming format.
+
+        Follows the exact OpenAI streaming spec:
+        - When tool_calls present: role chunk -> tool_call chunks (name+args split) -> finish(tool_calls)
+        - When no tool_calls: role chunk -> content chunk -> finish(stop)
+        - tool_calls and content are never mixed in the same delta
+        """
         resp = web.StreamResponse(
             status=200,
             headers={
@@ -186,71 +192,57 @@ class ModelProxy:
         await resp.prepare(http_request)
 
         created = int(time.time())
-        content = req.response_text or ""
+        has_tool_calls = bool(req.response_tool_calls)
 
-        # Chunk 1: role delta
-        chunk_role = {
-            "id": req.request_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {"role": "assistant", "content": ""},
-                "finish_reason": None,
-            }],
-        }
-        await resp.write(f"data: {json.dumps(chunk_role)}\n\n".encode())
+        async def _send(data: dict) -> None:
+            await resp.write(f"data: {json.dumps(data)}\n\n".encode())
 
-        # Chunk 2: content delta (send full content in one chunk for simplicity)
-        chunk_content = {
-            "id": req.request_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {"content": content},
-                "finish_reason": None,
-            }],
-        }
-        await resp.write(f"data: {json.dumps(chunk_content)}\n\n".encode())
+        def _chunk(delta: dict, finish_reason: str | None = None) -> dict:
+            c: dict = {
+                "id": req.request_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+            }
+            return c
 
-        # Chunk 3: tool calls (if any) — match OpenAI streaming format with index
-        if req.response_tool_calls:
+        # Chunk 1: role
+        await _send(_chunk({"role": "assistant"}))
+
+        if has_tool_calls:
+            # OpenAI spec: each tool_call is sent as two chunks:
+            #   1) index + id + type + function.name + function.arguments=""
+            #   2) index + function.arguments=<full args>
             for i, tc in enumerate(req.response_tool_calls):
-                tc_with_index = dict(tc, index=i)
-                chunk_tool = {
-                    "id": req.request_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {"tool_calls": [tc_with_index]},
-                        "finish_reason": None,
-                    }],
-                }
-                await resp.write(f"data: {json.dumps(chunk_tool)}\n\n".encode())
+                func = tc.get("function", {})
+                # First chunk: metadata
+                await _send(_chunk({"tool_calls": [{
+                    "index": i,
+                    "id": tc.get("id", f"call_{i}"),
+                    "type": "function",
+                    "function": {"name": func.get("name", ""), "arguments": ""},
+                }]}))
+                # Second chunk: arguments
+                await _send(_chunk({"tool_calls": [{
+                    "index": i,
+                    "function": {"arguments": func.get("arguments", "{}")},
+                }]}))
 
-        # Chunk 4: finish
-        chunk_done = {
-            "id": req.request_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {},
-                "finish_reason": req.finish_reason,
-            }],
-            "usage": req.response_usage or {
-                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-            },
-        }
-        await resp.write(f"data: {json.dumps(chunk_done)}\n\n".encode())
+            # Send any text content before finish (some models include thinking text)
+            content = req.response_text or ""
+            if content:
+                await _send(_chunk({"content": content}))
 
-        # Final sentinel
+            # Finish with tool_calls
+            await _send(_chunk({}, finish_reason="tool_calls"))
+        else:
+            # Normal text response
+            content = req.response_text or ""
+            if content:
+                await _send(_chunk({"content": content}))
+            await _send(_chunk({}, finish_reason="stop"))
+
         await resp.write(b"data: [DONE]\n\n")
         await resp.write_eof()
         return resp
