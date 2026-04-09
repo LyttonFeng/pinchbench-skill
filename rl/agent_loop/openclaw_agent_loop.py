@@ -316,6 +316,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         agent_dir = Path.home() / ".openclaw" / "agents" / agent_id / "agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
         models = {
+            "mode": "replace",
             "providers": {"verl": {
                 "baseUrl": proxy_url, "apiKey": "dummy", "api": "openai-completions",
                 "models": [{"id": "verl-proxy", "name": "verl-proxy"}],
@@ -341,6 +342,7 @@ class OpenClawAgentLoop(AgentLoopBase):
     def _build_remote_setup(self, agent_id: str, proxy_url: str, workspace: str, task_id: str) -> str:
         import base64
         models_json = json.dumps({
+            "mode": "replace",
             "providers": {"verl": {
                 "baseUrl": proxy_url, "apiKey": "dummy", "api": "openai-completions",
                 "models": [{"id": "verl-proxy", "name": "verl-proxy"}],
