@@ -29,7 +29,7 @@ export PRM_API_KEY="dummy"
 export HF_HOME="/workspace/hf_cache"
 export PYTHONUNBUFFERED=1
 export AGENT_TIMEOUT=300
-export MAX_TURNS=10
+export MAX_TURNS=5
 
 cd "${REPO_DIR}"
 

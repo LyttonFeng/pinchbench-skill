@@ -2,14 +2,51 @@
 # ═══════════════════════════════════════════════════════════════
 #  RunPod 新 Pod 一键初始化脚本
 #
-#  镜像要求: PyTorch 2.10+ / CUDA 12.8 / Python 3.11
-#  推荐镜像: runpod/pytorch:2.10.0-py3.11-cuda12.8.0-devel-ubuntu22.04
-#  GPU: NVIDIA L40S (48GB)
+#  推荐镜像: runpod/pytorch:2.10.0-py3.12-cuda12.8.0-devel-ubuntu22.04
+#             (自带 PyTorch 2.10 + Python 3.12 + CUDA 12.8)
+#  GPU 推荐: NVIDIA L40S (48GB) 或 A100 (80GB)
 #
 #  用法:
 #    1. 新建 Pod，SSH 进去
 #    2. 运行: bash setup_new_pod.sh
 #    3. 按提示启动训练
+#
+#  ── 踩坑记录 ──
+#
+#  1. flash-attn 绝对不能从源码编译 (pip install flash-attn)
+#     → 会耗尽 CPU/RAM 导致 Pod 冻结。必须用预编译 wheel。
+#     → wheel 地址见下方 step 2c
+#
+#  2. 安装顺序: PyTorch → vLLM → flash-attn → veRL
+#     → vLLM 会拉它自己的 torch 版本，必须先装好 PyTorch
+#     → flash-attn wheel 必须匹配 torch 版本 + CUDA 版本 + Python 版本
+#     → veRL 最后装，避免它改 torch/vllm 依赖
+#
+#  3. PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+#     → vLLM 0.19 的 CuMemAllocator 会 assert 报错，绝对不能设
+#
+#  4. gpu_memory_utilization 不能太高
+#     → 0.5 → OOM (backward pass 需要 ~10GB)
+#     → 0.4 → 还是 OOM
+#     → 0.35 → 配合 optimizer_offload=True 和 batch_size=1 可以跑
+#     → A100 80GB 可以用更高的值
+#
+#  5. ECS 4核8G 资源有限
+#     → 并发 OpenClaw 不要超过 1-2 个
+#     → openclaw agents add 需要 flock 防并发写
+#     → agent_timeout 需要 300s+
+#
+#  6. OpenClaw SSE 流式 tool_calls 格式
+#     → 必须单 chunk 发送每个 tool_call（含 id + name + arguments）
+#     → 不能分成 name chunk + args chunk
+#     → 不能在 tool_calls 响应里混 content chunk
+#
+#  7. Qwen3 的 <tool_call>/<think> 是 special tokens
+#     → skip_special_tokens=True 会移除 tag 但保留 JSON body
+#     → _parse_tool_calls 必须用 skip_special_tokens=False 的文本
+#
+#  8. OpenClaw system prompt 约 14000 tokens
+#     → max_prompt_length 必须 ≥ 16384，否则 prompt 被截断丢失 tool 定义
 #
 #  ECS 信息 (阿里云 4核8G):
 #    IP:   8.163.82.224
@@ -64,29 +101,63 @@ fi
 echo ""
 echo "[2/6] 安装 Python 依赖..."
 
-# 2a. 先升级 PyTorch 到 2.10 (vllm 0.19.0 要求)
-echo "  安装 PyTorch 2.10 (cu128)..."
-pip install --break-system-packages \
-    torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
-    --index-url https://download.pytorch.org/whl/cu128
+# 检测已有环境
+TORCH_VER=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "none")
+echo "  当前 PyTorch: ${TORCH_VER}"
 
-# 2b. 安装 vllm（会拉大量子依赖）
-echo "  安装 vllm..."
-pip install --break-system-packages vllm==0.19.0
+# 2a. PyTorch 2.10 (cu128)
+if [[ "$TORCH_VER" != 2.10* ]]; then
+    echo "  安装 PyTorch 2.10 (cu128)..."
+    pip install --break-system-packages \
+        torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
+        --index-url https://download.pytorch.org/whl/cu128
+else
+    echo "  ✓ PyTorch 已是 2.10"
+fi
 
-# 2c. flash-attn：使用预编译 wheel，绝对不要从源码编译（会卡死 CPU 几十分钟）
-#     预编译 wheel 来源: https://github.com/lesj0610/flash-attention/releases
-echo "  安装 flash-attn (预编译 wheel, 不编译!)..."
-pip install --break-system-packages \
-    "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp312/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+# 2b. vLLM 0.19.0
+VLLM_VER=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "none")
+if [[ "$VLLM_VER" != "0.19.0" ]]; then
+    echo "  安装 vllm 0.19.0..."
+    pip install --break-system-packages vllm==0.19.0
+else
+    echo "  ✓ vLLM 已是 0.19.0"
+fi
+
+# 2c. flash-attn: 预编译 wheel，绝对不从源码编译！！！
+#     匹配: Python 3.12 + PyTorch 2.10 + CUDA 12.x
+#     来源: https://github.com/lesj0610/flash-attention/releases
+FA_VER=$(python3 -c "import flash_attn; print(flash_attn.__version__)" 2>/dev/null || echo "none")
+if [[ "$FA_VER" == "none" ]]; then
+    PY_VER=$(python3 -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+    echo "  安装 flash-attn (预编译 wheel, Python ${PY_VER})..."
+    if [[ "$PY_VER" == "cp312" ]]; then
+        pip install --break-system-packages \
+            "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp312/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+    elif [[ "$PY_VER" == "cp311" ]]; then
+        pip install --break-system-packages \
+            "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp311/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
+    else
+        echo "  ⚠ 无匹配的 flash-attn wheel (Python ${PY_VER})"
+        echo "  尝试 pip install flash-attn --no-build-isolation ..."
+        pip install --break-system-packages flash-attn --no-build-isolation || echo "  ⚠ flash-attn 安装失败，继续"
+    fi
+else
+    echo "  ✓ flash-attn 已安装: ${FA_VER}"
+fi
 
 # 2d. verl + 其他依赖
-echo "  安装 verl 及其他依赖..."
-pip install --break-system-packages \
-    verl==0.7.1 \
-    peft \
-    accelerate \
-    "datasets>=3.0"
+VERL_VER=$(python3 -c "import verl; print(verl.__version__)" 2>/dev/null || echo "none")
+if [[ "$VERL_VER" == "none" ]]; then
+    echo "  安装 verl 及其他依赖..."
+    pip install --break-system-packages \
+        verl==0.7.1 \
+        peft \
+        accelerate \
+        "datasets>=3.0"
+else
+    echo "  ✓ veRL 已安装: ${VERL_VER}"
+fi
 
 echo "✓ 依赖安装完成"
 
@@ -141,6 +212,11 @@ print(f'vLLM:         {vllm.__version__}')
 print(f'veRL:         {verl.__version__}')
 print(f'transformers: {transformers.__version__}')
 print(f'peft:         {peft.__version__}')
+try:
+    import flash_attn
+    print(f'flash-attn:   {flash_attn.__version__}')
+except ImportError:
+    print('flash-attn:   NOT INSTALLED')
 "
 
 echo ""

@@ -54,7 +54,7 @@ class OpenClawConfig:
     reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
     agent_timeout: float = 300.0
-    max_turns: int = 10
+    max_turns: int = 5
     prm_vllm_base_url: str = "http://localhost:8000/v1"
     prm_model: str = "Qwen3-4B"
     prm_api_key: str = "dummy"
@@ -71,7 +71,7 @@ class OpenClawConfig:
             reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
             agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "300")),
-            max_turns=int(os.environ.get("MAX_TURNS", "10")),
+            max_turns=int(os.environ.get("MAX_TURNS", "5")),
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen3-4B"),
             prm_api_key=os.environ.get("PRM_API_KEY", "dummy"),
@@ -252,6 +252,14 @@ class OpenClawAgentLoop(AgentLoopBase):
 
                 messages.append({"role": "assistant", "content": clean_text, "tool_calls": tool_calls or []})
                 turn_count += 1
+
+                total_resp_len = len(all_response_ids)
+                resp_budget = self.rollout_config.response_length
+                logger.info("[run] Accumulated response tokens: %d / %d (%.0f%%)",
+                            total_resp_len, resp_budget, 100 * total_resp_len / resp_budget if resp_budget else 0)
+                if total_resp_len >= resp_budget * 0.85:
+                    logger.warning("Response token budget nearly exhausted (%d/%d), stopping early", total_resp_len, resp_budget)
+                    break
 
             if openclaw_proc and openclaw_proc.returncode is None:
                 try:
