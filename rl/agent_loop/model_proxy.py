@@ -216,9 +216,10 @@ class ModelProxy:
         }
         await resp.write(f"data: {json.dumps(chunk_content)}\n\n".encode())
 
-        # Chunk 3: tool calls (if any)
+        # Chunk 3: tool calls (if any) — match OpenAI streaming format with index
         if req.response_tool_calls:
-            for tc in req.response_tool_calls:
+            for i, tc in enumerate(req.response_tool_calls):
+                tc_with_index = dict(tc, index=i)
                 chunk_tool = {
                     "id": req.request_id,
                     "object": "chat.completion.chunk",
@@ -226,7 +227,7 @@ class ModelProxy:
                     "model": model,
                     "choices": [{
                         "index": 0,
-                        "delta": {"tool_calls": [tc]},
+                        "delta": {"tool_calls": [tc_with_index]},
                         "finish_reason": None,
                     }],
                 }

@@ -91,7 +91,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${VAL_FILE}" \
     data.train_batch_size="${BATCH_SIZE}" \
-    data.max_prompt_length=4096 \
+    data.max_prompt_length=16384 \
     data.max_response_length=8192 \
     data.filter_overlong_prompts=True \
     data.truncation=left \
@@ -116,7 +116,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.9 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.35 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \

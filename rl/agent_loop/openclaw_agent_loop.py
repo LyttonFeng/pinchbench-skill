@@ -54,7 +54,7 @@ class OpenClawConfig:
     reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
     agent_timeout: float = 180.0
-    max_turns: int = 30
+    max_turns: int = 10
     prm_vllm_base_url: str = "http://localhost:8000/v1"
     prm_model: str = "Qwen3-4B"
     prm_api_key: str = "dummy"
@@ -70,8 +70,8 @@ class OpenClawConfig:
             pinchbench_dir=os.environ.get("PINCHBENCH_DIR", ""),
             reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
-            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "600")),
-            max_turns=int(os.environ.get("MAX_TURNS", "30")),
+            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "180")),
+            max_turns=int(os.environ.get("MAX_TURNS", "10")),
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen3-4B"),
             prm_api_key=os.environ.get("PRM_API_KEY", "dummy"),
@@ -125,6 +125,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         turns: list[TurnRecord] = []
         messages: list[dict] = []
         turn_count = 0
+        retry_count = 0
 
         t_start = time.time()
         openclaw_proc: Optional[asyncio.subprocess.Process] = None
@@ -143,6 +144,16 @@ class OpenClawAgentLoop(AgentLoopBase):
                 )
             logger.info("[run] OpenClaw started pid=%s, waiting for first request...", openclaw_proc.pid)
 
+            async def _drain_oc_stream(stream, label, tid):
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    logger.debug("[OC %s/%s] %s", tid, label, line.decode(errors="replace").rstrip())
+
+            asyncio.get_event_loop().create_task(_drain_oc_stream(openclaw_proc.stdout, "out", task_id))
+            asyncio.get_event_loop().create_task(_drain_oc_stream(openclaw_proc.stderr, "err", task_id))
+
             while turn_count < self.oc_config.max_turns:
                 try:
                     logger.info("[run] Waiting for proxy request (turn=%d, timeout=%.0fs)...", turn_count, self.oc_config.agent_timeout)
@@ -160,9 +171,20 @@ class OpenClawAgentLoop(AgentLoopBase):
                     await proxy.send_response(req)
                     break
 
-                chat_messages = list(req.messages)
+                n_msg = len(req.messages)
+                if turn_count > 0 and n_msg <= 2 and retry_count >= 2:
+                    logger.warning("OpenClaw stuck in retry loop (turn=%d, retries=%d), breaking", turn_count, retry_count)
+                    req.response_error = "retry loop detected"
+                    await proxy.send_response(req)
+                    break
+                if turn_count > 0 and n_msg <= 2:
+                    retry_count += 1
+                else:
+                    retry_count = 0
+
+                chat_messages = self._prepare_messages(req.messages, req.tools)
                 try:
-                    logger.info("[run] Applying chat template (messages=%d)...", len(chat_messages))
+                    logger.info("[run] Applying chat template (messages=%d, tools=%s)...", len(chat_messages), bool(req.tools))
                     prompt_token_ids = await self.apply_chat_template(chat_messages)
                     logger.info("[run] Chat template done, prompt_ids=%d", len(prompt_token_ids))
                 except Exception as e:
@@ -210,7 +232,13 @@ class OpenClawAgentLoop(AgentLoopBase):
 
                 tool_calls = self._parse_tool_calls(response_text)
 
-                req.response_text = clean_text
+                content_for_openclaw = self._strip_tool_tags(clean_text)
+                logger.info("[run] Turn %d: tool_calls=%s, finish=%s, content_len=%d",
+                            turn_count, bool(tool_calls),
+                            "tool_calls" if tool_calls else "stop",
+                            len(content_for_openclaw))
+
+                req.response_text = content_for_openclaw
                 req.response_tool_calls = tool_calls
                 req.finish_reason = "tool_calls" if tool_calls else "stop"
                 await proxy.send_response(req)
@@ -571,6 +599,51 @@ class OpenClawAgentLoop(AgentLoopBase):
             except json.JSONDecodeError:
                 pass
         return tool_calls if tool_calls else None
+
+    def _prepare_messages(self, messages: list[dict], tools: list[dict] | None) -> list[dict]:
+        """Prepare OpenClaw messages for Qwen's apply_chat_template.
+
+        1. Flatten content-parts format (list of dicts) to plain strings,
+           since Qwen's template silently drops list-format content.
+        2. Inject <tool_call> format instructions so the model knows to output
+           parseable XML tags when calling tools.
+        """
+        out = []
+        for msg in messages:
+            msg = dict(msg)
+            content = msg.get("content")
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        parts.append(part.get("text", ""))
+                msg["content"] = "\n".join(parts)
+            out.append(msg)
+
+        if tools:
+            TOOL_FORMAT_SUFFIX = (
+                "\n\n# Output Format for Tool Calls\n"
+                "When you need to call a tool, output the call inside <tool_call></tool_call> XML tags:\n"
+                "<tool_call>\n"
+                '{"name": "<function-name>", "arguments": {<args-json-object>}}\n'
+                "</tool_call>\n"
+                "You may call multiple tools by using multiple <tool_call> blocks."
+            )
+            for msg in out:
+                if msg.get("role") == "system":
+                    content = msg.get("content", "")
+                    if isinstance(content, str) and "<tool_call>" not in content:
+                        msg["content"] = content + TOOL_FORMAT_SUFFIX
+                    break
+
+        return out
+
+    def _strip_tool_tags(self, text: str) -> str:
+        """Strip <tool_call>...</tool_call> and <think>...</think> from text for OpenClaw content field."""
+        import re
+        text = re.sub(r'<tool_call>.*?</tool_call>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        return text.strip()
 
     def _get_public_ip(self) -> str:
         """Get public IP (kept for fallback/debugging)."""
