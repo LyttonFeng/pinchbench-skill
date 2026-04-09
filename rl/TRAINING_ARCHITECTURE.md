@@ -8,7 +8,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                        RunPod (L4 GPU, 24GB VRAM)                    │
+│                       RunPod (L40S GPU, 48GB VRAM)                    │
 │                                                                      │
 │  ┌─────────────────────────────────────────────────────────────┐     │
 │  │                    veRL Trainer (主控)                       │     │
@@ -165,11 +165,11 @@ Reward 分配 ───────│    找 <|im_end|> 位置                 
                     └─────────────────────────────────────────────────────────────┘
 
                     ┌─────────────────────────────────────────────────────────────┐
-Step 9              │              REINFORCE Update                                │
+Step 9              │              REINFORCE++ Update                              │
 参数更新 ──────────│                                                             │
                     │  攒够 batch_size=8 条 episode 后:                           │
-                    │    ├── 计算 advantages (直接用 reward，不需要 baseline)     │
-                    │    ├── REINFORCE policy gradient loss (ppo_epochs=2)        │
+                    │    ├── 计算 advantages (REINFORCE++ token-level baseline)  │
+                    │    ├── REINFORCE++ policy gradient loss (ppo_epochs=2)      │
                     │    ├── KL penalty (coef=0.05, vs ref model)                │
                     │    └── LoRA 参数更新                                        │
                     │                                                             │
@@ -301,7 +301,7 @@ reward:        [ 0  0  0   +0.15     0   0   0  0   +0.10     0   0  0  +0.00+1.
 ## 4. GPU 显存分配
 
 ```
-L4 24GB VRAM 分配:
+L40S 48GB VRAM 分配:
 
 ┌─────────────────────────────────────────────────┐
 │                                                 │
@@ -311,13 +311,13 @@ L4 24GB VRAM 分配:
 │                                                 │
 │  ┌───────────────────┐ ┌─────────────────────┐  │
 │  │                   │ │                     │  │
-│  │  ~10.8 GB         │ │  ~13.2 GB           │  │
+│  │  ~21.6 GB         │ │  ~26.4 GB           │  │
 │  │                   │ │                     │  │
 │  │  Qwen3-4B 推理    │ │  LoRA forward       │  │
 │  │  (Agent + PRM     │ │  + backward         │  │
 │  │   共享)           │ │  + optimizer state   │  │
 │  │                   │ │  (grad accumulation  │  │
-│  │  KV cache         │ │   micro_batch=2)     │  │
+│  │  KV cache         │ │   micro_batch=4)     │  │
 │  │  prefix cache     │ │                     │  │
 │  │                   │ │                     │  │
 │  └───────────────────┘ └─────────────────────┘  │
@@ -332,7 +332,7 @@ L4 24GB VRAM 分配:
 - layered_summon: LoRA sync 只传 delta 权重
 - Ref model CPU offload: 不占 GPU
 - gradient_checkpointing: 用计算换显存
-- micro_batch=2 + gradient accumulation: 降低峰值显存
+- micro_batch=4 + gradient accumulation: 降低峰值显存
 
 ---
 
@@ -400,7 +400,7 @@ PRM scoring: 8 × ~8 turns = ~64 次 vLLM 调用 ──► ~10 秒
 REINFORCE update: forward + backward ─────────► ~30 秒
 
 总计: ~8-12 分钟 / training step
-50 epochs × 8 tasks = 400 episodes ──► ~6-10 小时
+5 epochs × 8 tasks = 40 episodes ──► ~1-2 小时 (pipeline 验证)
 ```
 
 ### 6.2 瓶颈分析
@@ -488,16 +488,15 @@ Training Step N 结束:
 veRL 框架 (不修改源码)
   │
   ├── AgentLoopBase (抽象基类)
-  │     └── @register("openclaw_agent")
-  │           └── OpenClawAgentLoop (我们的实现)
+  │     └── OpenClawAgentLoop (hydra instantiate)
   │
-  ├── AbstractRewardManager (抽象基类)
-  │     └── PinchBenchRewardManager (我们的实现)
+  ├── Custom Reward Function
+  │     └── compute_score() (rl/train/reward_manager.py)
   │
   ├── 训练配置
   │     ├── agent_loop_config_path → rl/agent_loop/config.yaml
-  │     ├── reward.reward_manager.path → rl/train/reward_manager.py
-  │     └── reward.reward_manager.name → PinchBenchRewardManager
+  │     ├── reward.custom_reward_function.path → rl/train/reward_manager.py
+  │     └── reward.custom_reward_function.name → compute_score
   │
   └── 数据格式
         └── parquet: {prompt, extra_info, data_source, reward_model}

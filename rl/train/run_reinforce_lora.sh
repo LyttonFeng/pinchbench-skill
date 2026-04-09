@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Online RL: REINFORCE + LoRA + OpenClaw Agent Loop
+# Online RL: REINFORCE++ + LoRA + OpenClaw Agent Loop
 #
 # Live-user 场景 (rollout.n=1)：每个 training step 从 8 个 task 采样 batch_size 个，
 # 用当前 LoRA 策略跑 openclaw episode，拿 process + terminal reward，
-# 做一次 REINFORCE update。
+# 做一次 REINFORCE++ update (token-level running mean baseline)。
 #
 # 三组 ablation 实验：
 #   REWARD_MODE=baseline    → Mode A: 纯 terminal reward
@@ -57,7 +57,7 @@ REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracl
 
 # ── 环境变量检查 ──
 echo "=============================="
-echo "  veRL Online RL (REINFORCE + LoRA)"
+echo "  veRL Online RL (REINFORCE++ + LoRA)"
 echo "  模型: ${MODEL}"
 echo "  LoRA rank: ${LORA_RANK}"
 echo "  GPU 数: ${N_GPUS}"
