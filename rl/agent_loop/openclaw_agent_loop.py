@@ -310,7 +310,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         workspace.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             ["openclaw", "agents", "add", agent_id,
-             "--model", "verl-proxy", "--workspace", str(workspace), "--non-interactive"],
+             "--model", "verl/verl-proxy", "--workspace", str(workspace), "--non-interactive"],
             capture_output=True, text=True, check=False,
         )
         agent_dir = Path.home() / ".openclaw" / "agents" / agent_id / "agent"
@@ -320,7 +320,7 @@ class OpenClawAgentLoop(AgentLoopBase):
                 "baseUrl": proxy_url, "apiKey": "dummy", "api": "openai-completions",
                 "models": [{"id": "verl-proxy", "name": "verl-proxy"}],
             }},
-            "defaultProvider": "verl", "defaultModel": "verl-proxy",
+            "defaultProvider": "verl", "defaultModel": "verl/verl-proxy",
         }
         (agent_dir / "models.json").write_text(json.dumps(models, indent=2), "utf-8")
         sessions_file = Path.home() / ".openclaw" / "agents" / agent_id / "sessions" / "sessions.json"
@@ -333,15 +333,14 @@ class OpenClawAgentLoop(AgentLoopBase):
                 "baseUrl": proxy_url, "apiKey": "dummy", "api": "openai-completions",
                 "models": [{"id": "verl-proxy", "name": "verl-proxy"}],
             }},
-            "defaultProvider": "verl", "defaultModel": "verl-proxy",
+            "defaultProvider": "verl", "defaultModel": "verl/verl-proxy",
         }, indent=2)
         agent_dir = f"$HOME/.openclaw/agents/{agent_id}/agent"
-        # Use base64 to avoid any shell quoting issues with JSON
         import base64
         b64 = base64.b64encode(models_json.encode()).decode()
         return " && ".join([
             f"mkdir -p {workspace}",
-            f"openclaw agents add {agent_id} --model verl-proxy --workspace {workspace} --non-interactive 2>/dev/null || true",
+            f"openclaw agents add {agent_id} --model verl/verl-proxy --workspace {workspace} --non-interactive 2>/dev/null || true",
             f"mkdir -p {agent_dir}",
             f"echo {b64} | base64 -d > {agent_dir}/models.json",
             f"rm -f $HOME/.openclaw/agents/{agent_id}/sessions/sessions.json",
