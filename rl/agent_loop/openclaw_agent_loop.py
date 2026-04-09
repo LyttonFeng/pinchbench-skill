@@ -53,7 +53,7 @@ class OpenClawConfig:
     pinchbench_dir: str = ""
     reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
-    agent_timeout: float = 300.0
+    agent_timeout: float = 120.0
     max_turns: int = 5
     prm_vllm_base_url: str = "http://localhost:8000/v1"
     prm_model: str = "Qwen3-4B"
@@ -70,7 +70,7 @@ class OpenClawConfig:
             pinchbench_dir=os.environ.get("PINCHBENCH_DIR", ""),
             reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
-            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "300")),
+            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "120")),
             max_turns=int(os.environ.get("MAX_TURNS", "5")),
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen3-4B"),
@@ -157,12 +157,28 @@ class OpenClawAgentLoop(AgentLoopBase):
             while turn_count < self.oc_config.max_turns:
                 try:
                     logger.info("[run] Waiting for proxy request (turn=%d, timeout=%.0fs)...", turn_count, self.oc_config.agent_timeout)
-                    req: ModelRequest = await asyncio.wait_for(
-                        proxy.get_request(), timeout=self.oc_config.agent_timeout
+                    proxy_task = asyncio.ensure_future(proxy.get_request())
+                    proc_task = asyncio.ensure_future(openclaw_proc.wait())
+                    done, pending = await asyncio.wait(
+                        [proxy_task, proc_task],
+                        timeout=self.oc_config.agent_timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
+                    for p in pending:
+                        p.cancel()
+
+                    if not done:
+                        logger.warning("Proxy timeout at turn %d", turn_count)
+                        break
+
+                    if proc_task in done and proxy_task not in done:
+                        logger.info("OpenClaw exited (code=%s) before sending request", openclaw_proc.returncode)
+                        break
+
+                    req: ModelRequest = proxy_task.result()
                     logger.info("[run] Got proxy request turn=%d messages=%d", turn_count, len(req.messages))
-                except asyncio.TimeoutError:
-                    logger.warning("Proxy timeout at turn %d", turn_count)
+                except asyncio.CancelledError:
+                    logger.warning("Cancelled at turn %d", turn_count)
                     break
 
                 if openclaw_proc.returncode is not None:
