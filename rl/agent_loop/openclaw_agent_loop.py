@@ -53,7 +53,7 @@ class OpenClawConfig:
     pinchbench_dir: str = ""
     reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
-    agent_timeout: float = 180.0
+    agent_timeout: float = 300.0
     max_turns: int = 10
     prm_vllm_base_url: str = "http://localhost:8000/v1"
     prm_model: str = "Qwen3-4B"
@@ -70,7 +70,7 @@ class OpenClawConfig:
             pinchbench_dir=os.environ.get("PINCHBENCH_DIR", ""),
             reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
-            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "180")),
+            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "300")),
             max_turns=int(os.environ.get("MAX_TURNS", "10")),
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen3-4B"),
@@ -421,9 +421,10 @@ class OpenClawAgentLoop(AgentLoopBase):
         agent_dir = f"$HOME/.openclaw/agents/{agent_id}/agent"
         b64_models = base64.b64encode(models_json.encode()).decode()
         b64_auth = base64.b64encode(auth_json.encode()).decode()
+        lock_file = "/tmp/openclaw_agents.lock"
         return " && ".join([
             f"mkdir -p {workspace}",
-            f"openclaw agents add {agent_id} --model verl/verl-proxy --workspace {workspace} --non-interactive 2>/dev/null || true",
+            f"(flock {lock_file} openclaw agents add {agent_id} --model verl/verl-proxy --workspace {workspace} --non-interactive 2>&1 || echo '[WARN] openclaw agents add failed for {agent_id}' >&2)",
             f"mkdir -p {agent_dir}",
             f"echo {b64_models} | base64 -d > {agent_dir}/models.json",
             f"echo {b64_auth} | base64 -d > {agent_dir}/auth-profiles.json",
