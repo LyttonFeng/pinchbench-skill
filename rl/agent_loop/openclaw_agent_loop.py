@@ -54,10 +54,14 @@ class OpenClawConfig:
     judge_model: str = "qwen-plus"
     judge_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     judge_api_key: str = ""
-    reward_mode: str = "oracle"
+    reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
     agent_timeout: float = 600.0
     max_turns: int = 30
+    # PRM self-judge: Qwen3-4B scores its own turns via vLLM
+    prm_vllm_base_url: str = "http://localhost:8000/v1"
+    prm_model: str = "Qwen3-4B"
+    prm_api_key: str = "dummy"
 
     @classmethod
     def from_env(cls) -> "OpenClawConfig":
@@ -74,10 +78,13 @@ class OpenClawConfig:
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
             ),
             judge_api_key=os.environ.get("JUDGE_API_KEY", ""),
-            reward_mode=os.environ.get("REWARD_MODE", "oracle"),
+            reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
             agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "600")),
             max_turns=int(os.environ.get("MAX_TURNS", "30")),
+            prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1"),
+            prm_model=os.environ.get("PRM_MODEL", "Qwen3-4B"),
+            prm_api_key=os.environ.get("PRM_API_KEY", "dummy"),
         )
 
 
@@ -125,7 +132,7 @@ class OpenClawAgentLoop:
         """
         from .model_proxy import ModelProxy, ModelRequest
         from .trajectory import TurnRecord
-        from .reward import compute_episode_rewards
+        from .reward import compute_episode_rewards_async
 
         session_id = session_id or f"rl-{uuid.uuid4().hex[:8]}"
         proxy = ModelProxy(host=self.config.proxy_bind_host, port=0)
@@ -237,13 +244,17 @@ class OpenClawAgentLoop:
         # Run PinchBench grading
         terminal_success = self._run_grading(task_id, transcript_raw)
 
-        # Compute per-turn rewards
+        # Compute per-turn rewards (self-judge: Qwen3-4B scores its own turns)
         trajectory_for_reward = self._transcript_to_messages(transcript_raw)
-        per_turn_rewards = compute_episode_rewards(
+        per_turn_rewards = await compute_episode_rewards_async(
             trajectory_for_reward,
             terminal_success,
             task_id,
+            task_prompt=task_prompt,
             mode=self.config.reward_mode,
+            vllm_base_url=self.config.prm_vllm_base_url,
+            judge_model=self.config.prm_model,
+            judge_api_key=self.config.prm_api_key,
         )
 
         # Reconstruct token-level trajectory

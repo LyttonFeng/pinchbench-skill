@@ -6,9 +6,10 @@
 # 做一次 GRPO update (rollout.n=1 退化为 REINFORCE)。
 #
 # 三组 ablation 实验：
-#   REWARD_MODE=baseline  → Mode A: 纯 terminal reward
-#   REWARD_MODE=rule      → Mode B: 通用行为规则 + terminal
-#   REWARD_MODE=oracle    → Mode C: 规则 + 天眼 reference trajectory + terminal
+#   REWARD_MODE=baseline    → Mode A: 纯 terminal reward
+#   REWARD_MODE=rule        → Mode B: 通用行为规则 + terminal (无 LLM 调用)
+#   REWARD_MODE=self-judge  → Mode C: Qwen3-4B self-judge with rubric + 天眼 (默认)
+#   REWARD_MODE=oracle-judge→ Mode D: qwen-plus judge (fallback)
 #
 # 用法：
 #   # Step 1: 准备 prompt 数据
@@ -47,7 +48,7 @@ MICRO_BATCH="${MICRO_BATCH:-2}"        # L4 显存限制
 LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
-REWARD_MODE="${REWARD_MODE:-oracle}"   # baseline / rule / oracle
+REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracle-judge
 
 # ── 环境变量检查 ──
 echo "=============================="
@@ -70,9 +71,13 @@ if [ ! -f "${TRAIN_FILE}" ]; then
     exit 1
 fi
 
-# 设置 PINCHBENCH_DIR 供 agent loop 使用
+# 设置环境变量供 agent loop 和 reward manager 使用
 export PINCHBENCH_DIR="${REPO_ROOT}"
 export REWARD_MODE="${REWARD_MODE}"
+# PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
+export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
+export PRM_MODEL="${PRM_MODEL:-Qwen3-4B}"
+export PRM_API_KEY="${PRM_API_KEY:-dummy}"
 
 mkdir -p "${OUTPUT_DIR}"
 

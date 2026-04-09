@@ -462,19 +462,22 @@ qwen_plus_stats:
 
 ## Ablation 实验设计
 
-三组对比实验，验证 process reward 和天眼的价值：
+四组对比实验，验证 process reward、self-judge 和天眼的价值：
 
-| 实验组 | 通用规则 | Reference Trajectory | Terminal Reward | 说明 |
+| 实验组 | PRM 方式 | Reference Trajectory | Terminal Reward | 说明 |
 |-------|:-------:|:-------------------:|:--------------:|------|
-| **A: Baseline** | ✗ | ✗ | ✓ | 纯 terminal reward |
-| **B: Rule-only** | ✓ | ✗ | ✓ | 通用行为规则，不看标准答案 |
-| **C: Oracle** | ✓ | ✓ | ✓ | 拿着 qwen-plus 成功路径打分 |
+| **A: Baseline** | 无 | ✗ | ✓ | 纯 terminal reward |
+| **B: Rule-only** | 规则代码 | ✗ | ✓ | Python 规则，无 LLM 调用 |
+| **C: Self-Judge** | Qwen3-4B | ✓（在 rubric 中） | ✓ | **默认**：自进化 self-judge |
+| **D: Oracle-Judge** | qwen-plus API | ✓（在 rubric 中） | ✓ | 强 judge 对照组 |
 
 ### 预期结果
 
 - **A vs B**: process reward 是否帮助模型在 terminal=0 的 task 上也能学习
-- **B vs C**: 天眼是否加速收敛（尤其在 task_12 这种"方法选择"很关键的 task 上）
-- 关注指标: PinchBench 总分、per-task 分数变化、收敛速度（多少 training step 后开始拿到 terminal reward）
+- **B vs C**: LLM judge 是否比规则更灵活（尤其在内容质量判断上）
+- **C vs D**: self-judge 是否足够好（自进化 vs 外部监督）
+- **C 随训练提升**: self-judge 应随 agent 变强而变准（正循环）
+- 关注指标: PinchBench 总分、per-task 分数变化、收敛速度
 
 ### reward 计算方式
 
@@ -485,9 +488,20 @@ Mode A: reward[last_turn] = terminal_reward
 Mode B: reward[k] = generic_rule_reward(turn_k)
         reward[last_turn] += terminal_reward
 
-Mode C: reward[k] = generic_rule_reward(turn_k) + oracle_reward(turn_k, reference)
+Mode C: reward[k] = Qwen3-4B_judge(turn_k, rubric + reference_trajectory)
+        reward[last_turn] += terminal_reward
+
+Mode D: reward[k] = qwen-plus_judge(turn_k, rubric + reference_trajectory)
         reward[last_turn] += terminal_reward
 ```
+
+### Self-Judge 自进化逻辑
+
+Mode C 的核心假设：
+- Qwen3-4B 做任务时不一定知道怎么做对
+- 但给它详细 rubric（含天眼 reference trajectory），它作为 judge 能判断"这一步做得好不好"
+- 类似学生考试不会做，但给标准答案让他改卷，他是能改的
+- 随着 RL 训练 agent 变强，同一个模型做 judge 也变准 → 正循环
 
 ### reward 量级
 

@@ -1,10 +1,13 @@
 """
 Process reward + terminal reward computation for PinchBench RL.
 
-Three ablation modes:
-  Mode A (baseline):  per-turn reward = 0, last turn gets terminal_reward
-  Mode B (rule-only): per-turn reward from generic behavior rules
-  Mode C (oracle):    Mode B + reference trajectory matching (open-eye judge)
+Four ablation modes:
+  Mode A (baseline):    per-turn reward = 0, last turn gets terminal_reward
+  Mode B (rule-only):   per-turn reward from generic behavior rules (fast, no LLM)
+  Mode C (self-judge):  Qwen3-4B self-judge with rubric + reference trajectory
+  Mode D (oracle-judge): qwen-plus judge (fallback if self-judge is unreliable)
+
+Default mode: C (self-judge) — 自进化：模型自己评判自己
 
 Terminal reward: {-1, +1}  (task fail / succeed)
 Process reward:  [-0.5, +0.3] per turn
@@ -12,16 +15,384 @@ Process reward:  [-0.5, +0.3] per turn
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Generic behavior rules (Mode B) ──
+
+# ══════════════════════════════════════════════════════════════
+#  Per-task PRM rubrics (reference trajectories + scoring guide)
+# ══════════════════════════════════════════════════════════════
+
+TASK_RUBRICS: dict[str, dict[str, Any]] = {
+    "task_02_stock": {
+        "goal": "Research Apple (AAPL) stock price, save to stock_report.txt with price, date, and market summary.",
+        "reference_steps": [
+            "1. web_search: search for AAPL/Apple stock price",
+            "2. web_fetch or additional web_search: get detailed data (may retry different sources)",
+            "3. write: create stock_report.txt with price ($xxx.xx), date, and market summary",
+            "4. Summarize and confirm completion",
+        ],
+        "common_mistakes": [
+            "Searching but never writing the file (premature termination)",
+            "Writing the file without any web_search first (fabricating data)",
+            "Repeating the same failed search query without changing it",
+        ],
+        "qwen_plus_stats": "7 turns, 6 tool calls, 745 bytes output",
+    },
+    "task_12_skill_search": {
+        "goal": "Find and replace specific values in config files (settings.json and database.yml).",
+        "reference_steps": [
+            "1. exec ls or read: examine directory structure and file contents",
+            "2. read: read each config file to understand current values",
+            "3. edit: precisely replace target values (NOT blind sed)",
+            "4. read: verify the modifications were applied correctly",
+        ],
+        "common_mistakes": [
+            "Using sed -i without reading the file first (blind replacement)",
+            "Repeating the same failing sed command multiple times",
+            "Not verifying changes after editing",
+            "Using sed on macOS without -i '' (syntax error)",
+        ],
+        "qwen_plus_stats": "9 turns, 8 tool calls. Used edit with expanded context for ambiguous matches.",
+    },
+    "task_10_workflow": {
+        "goal": "Read config.json, extract API endpoint, create a Python script to call it, document in NOTES.md.",
+        "reference_steps": [
+            "1. read: read config.json to extract endpoint and settings",
+            "2. Analyze: identify endpoint (api.example.com), method, headers",
+            "3. write: create Python script with requests, json, error handling",
+            "4. write: create NOTES.md documenting the workflow",
+        ],
+        "common_mistakes": [
+            "Writing the Python script without reading config.json first",
+            "Python script missing error handling (no try/except)",
+            "NOTES.md too brief (less than 500 bytes)",
+        ],
+        "qwen_plus_stats": "4 turns, 3 tool calls. Python: 1704 bytes, NOTES: 1389 bytes.",
+    },
+    "task_22_second_brain": {
+        "goal": "Create and organize knowledge notes with cross-references and structured format.",
+        "reference_steps": [
+            "1. read/exec: examine existing note structure",
+            "2. read: read existing note content to understand context",
+            "3. write: create new notes with structured format (headers, lists, links)",
+            "4. write: update index or create cross-references between notes",
+        ],
+        "common_mistakes": [
+            "Writing notes without reading existing content first",
+            "Notes lacking structure (no headers, lists, or links)",
+            "Only creating one file without cross-references",
+        ],
+        "qwen_plus_stats": "7 turns, 4 tool calls.",
+    },
+    "task_16_email_triage": {
+        "goal": "Read all emails, analyze priority, and write classification/triage results.",
+        "reference_steps": [
+            "1. read/exec: list email directory contents",
+            "2. read: read each email individually (multiple read calls)",
+            "3. Analyze: discuss priority and categorization",
+            "4. write: write classification results covering all emails",
+        ],
+        "common_mistakes": [
+            "Reading only some emails before writing conclusions",
+            "Not covering all emails in the triage output",
+            "Skipping the analysis step and going straight to writing",
+        ],
+        "qwen_plus_stats": "15 turns, 14 tool calls. Read every email individually.",
+    },
+    "task_19_spreadsheet_summary": {
+        "goal": "Analyze CSV/XLSX data and write a summary report with actual computed values.",
+        "reference_steps": [
+            "1. read: read CSV file to understand data structure",
+            "2. read: attempt to read XLSX (will get binary)",
+            "3. exec: use awk/python/pandas to compute actual statistics",
+            "4. write: write report referencing real computed values",
+        ],
+        "common_mistakes": [
+            "Reading XLSX binary and writing report without processing the data",
+            "Report contains fabricated numbers not matching exec results",
+            "Not switching strategy when pandas is unavailable (try awk instead)",
+        ],
+        "qwen_plus_stats": "7 turns, 6 tool calls, 1728 bytes. Switched from pandas to awk when needed.",
+    },
+    "task_18_market_research": {
+        "goal": "Research APM/observability market: overview, competitors, pricing. Write comprehensive report.",
+        "reference_steps": [
+            "1. web_search: search market overview (leaders, market size)",
+            "2. web_search: search competitor comparison (Datadog vs Splunk etc.)",
+            "3. web_search: search pricing models",
+            "4. write: write comprehensive report (>5000 bytes) covering all dimensions",
+        ],
+        "common_mistakes": [
+            "Only searching once before writing the report",
+            "Using outdated year in search queries (2023 or earlier)",
+            "Report too short (less than 2000 bytes)",
+            "Missing competitor comparison or pricing analysis",
+        ],
+        "qwen_plus_stats": "5 turns, 4 tool calls, 8412 bytes. Three search angles: leaders, comparison, pricing.",
+    },
+    "task_24_polymarket_briefing": {
+        "goal": "Research Polymarket trending markets, search news for each, write briefing with 3 markets.",
+        "reference_steps": [
+            "1. web_search: search Polymarket trending/popular markets",
+            "2. web_search: search news for specific market topic 1",
+            "3. web_search: search news for specific market topic 2-3",
+            "4. write: write briefing covering 3 markets with sources",
+        ],
+        "common_mistakes": [
+            "Using outdated year in search queries (2023 or earlier)",
+            "Fabricating market probabilities without search evidence",
+            "Not searching for individual market topics (only general search)",
+            "Report missing specific sections for each market (## 1, ## 2, ## 3)",
+        ],
+        "qwen_plus_stats": "8 turns, 7 tool calls, 1719 bytes. Searched trends then each topic individually.",
+    },
+}
+
+# Generic rubric for unknown tasks
+_GENERIC_RUBRIC = {
+    "goal": "Complete the assigned task using appropriate tools.",
+    "reference_steps": [
+        "1. Gather information (read files, search web)",
+        "2. Process/analyze the information",
+        "3. Take action (write files, execute commands)",
+        "4. Verify the results",
+    ],
+    "common_mistakes": [
+        "Skipping information gathering and going straight to action",
+        "Not verifying results after taking action",
+        "Repeating failed commands without changing strategy",
+        "Empty response without any tool call",
+    ],
+}
+
+
+# ══════════════════════════════════════════════════════════════
+#  PRM Prompt Construction
+# ══════════════════════════════════════════════════════════════
+
+def build_prm_prompt(
+    task_id: str,
+    task_prompt: str,
+    turn_index: int,
+    total_turns: int,
+    current_turn: dict,
+    prev_turns: list[dict],
+    tool_result: Optional[str] = None,
+    mode: str = "self-judge",
+) -> str:
+    """Build the PRM scoring prompt for one assistant turn.
+
+    The prompt gives the judge:
+      - Task goal and rubric (what success looks like)
+      - Reference trajectory (天眼: how qwen-plus succeeded)
+      - Common mistakes to watch for
+      - The agent's previous actions (context)
+      - The current turn to evaluate
+    """
+    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+
+    # Format current turn info
+    tool_name = _get_tool_name(current_turn) or "(no tool call)"
+    tool_args = _get_tool_args(current_turn)
+    content = current_turn.get("content", "")
+
+    # Truncate long content
+    content_preview = content[:500] + "..." if len(content) > 500 else content
+    tool_result_preview = ""
+    if tool_result:
+        tool_result_preview = tool_result[:500] + "..." if len(tool_result) > 500 else tool_result
+
+    # Format previous actions summary
+    prev_summary_lines = []
+    for i, t in enumerate(prev_turns):
+        if t.get("role") == "assistant":
+            t_tool = _get_tool_name(t) or "text-only"
+            t_args = _get_tool_args(t)
+            arg_str = ""
+            if t_args:
+                arg_preview = str(t_args)[:100]
+                arg_str = f"({arg_preview})"
+            prev_summary_lines.append(f"  Turn {i+1}: {t_tool}{arg_str}")
+        elif t.get("role") == "tool":
+            tc = t.get("content", "")
+            status = "ERROR" if _is_error_result(tc) else "OK"
+            prev_summary_lines.append(f"    → Result: {status}")
+
+    prev_summary = "\n".join(prev_summary_lines[-20:]) if prev_summary_lines else "  (first turn)"
+
+    # Build reference steps string
+    ref_steps = "\n".join(rubric.get("reference_steps", []))
+
+    # Build common mistakes string
+    mistakes = "\n".join(f"- {m}" for m in rubric.get("common_mistakes", []))
+
+    # Format tool args for display
+    args_display = json.dumps(tool_args, ensure_ascii=False, indent=2)[:300] if tool_args else "(none)"
+
+    prompt = f"""You are an AI Agent behavior evaluator. Score the current step of an agent working on a task.
+
+## Task Goal
+{rubric.get("goal", task_prompt[:500])}
+
+## Reference Path (how a successful agent solves this)
+{ref_steps}
+
+## Common Mistakes to Watch For
+{mistakes}
+
+## Agent's Previous Actions (Turn 1 to {turn_index})
+{prev_summary}
+
+## Current Turn ({turn_index + 1} of ~{total_turns} expected)
+Tool: {tool_name}
+Arguments: {args_display}
+Agent's text: {content_preview}"""
+
+    if tool_result_preview:
+        prompt += f"\nTool result: {tool_result_preview}"
+
+    prompt += """
+
+## Scoring Instructions
+Evaluate whether this step moves the agent closer to the goal.
+Consider:
+- Is the agent following the reference path or doing something useful?
+- Is the agent avoiding the common mistakes listed above?
+- Is this step appropriate given what the agent has already done?
+
+Score range: -0.5 (harmful/wasteful step) to +0.3 (excellent progress)
+- +0.2 to +0.3: Step clearly advances toward the goal (e.g., correct tool with good arguments)
+- +0.05 to +0.15: Reasonable step, some progress
+- 0.0: Neutral, neither helpful nor harmful
+- -0.1 to -0.2: Suboptimal but not terrible (e.g., redundant action)
+- -0.3 to -0.5: Actively harmful (e.g., fabricating data, repeating failed commands)
+
+Respond with ONLY a JSON object, no other text:
+{"score": <float between -0.5 and 0.3>, "reason": "<one sentence explanation>"}"""
+
+    return prompt
+
+
+# ══════════════════════════════════════════════════════════════
+#  LLM Judge call
+# ══════════════════════════════════════════════════════════════
+
+async def call_llm_judge(
+    prompt: str,
+    vllm_base_url: str = "http://localhost:8000/v1",
+    model: str = "Qwen3-4B",
+    api_key: str = "dummy",
+    timeout: float = 30.0,
+) -> float:
+    """Call LLM (Qwen3-4B via vLLM) to score a single turn.
+
+    Returns score in [-0.5, +0.3]. Falls back to 0.0 on any error.
+    """
+    import aiohttp
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a strict scoring function. Respond with ONLY a JSON object."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 128,
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{vllm_base_url}/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning("PRM judge HTTP %d", resp.status)
+                    return 0.0
+                data = await resp.json()
+    except Exception as e:
+        logger.warning("PRM judge request failed: %s", e)
+        return 0.0
+
+    try:
+        text = data["choices"][0]["message"]["content"].strip()
+        # Strip markdown fences if present
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        # Strip <think>...</think> blocks
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        result = json.loads(text)
+        score = float(result.get("score", 0.0))
+        reason = result.get("reason", "")
+        logger.debug("PRM judge: score=%.2f reason=%s", score, reason)
+        return max(-0.5, min(0.3, score))
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+        logger.warning("PRM judge parse failed: %s, raw: %s", e, text[:200] if 'text' in dir() else "N/A")
+        return 0.0
+
+
+def call_llm_judge_sync(
+    prompt: str,
+    vllm_base_url: str = "http://localhost:8000/v1",
+    model: str = "Qwen3-4B",
+    api_key: str = "dummy",
+    timeout: float = 30.0,
+) -> float:
+    """Synchronous wrapper for call_llm_judge."""
+    from urllib import request as urllib_request, error as urllib_error
+
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a strict scoring function. Respond with ONLY a JSON object."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 128,
+    }).encode("utf-8")
+
+    req = urllib_request.Request(
+        f"{vllm_base_url}/chat/completions",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        logger.warning("PRM judge sync request failed: %s", e)
+        return 0.0
+
+    try:
+        text = data["choices"][0]["message"]["content"].strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        result = json.loads(text)
+        score = float(result.get("score", 0.0))
+        return max(-0.5, min(0.3, score))
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+        logger.warning("PRM judge sync parse failed: %s", e)
+        return 0.0
+
+
+# ══════════════════════════════════════════════════════════════
+#  Helper functions (shared with rule-based mode)
+# ══════════════════════════════════════════════════════════════
 
 def _extract_tool_calls(turn: dict) -> list[dict]:
-    """Extract tool calls from an assistant turn."""
     raw = turn.get("tool_calls", [])
     calls = []
     for tc in raw:
@@ -46,7 +417,6 @@ def _get_tool_args(turn: dict) -> dict:
     args = calls[0].get("arguments", {})
     if isinstance(args, str):
         try:
-            import json
             return json.loads(args)
         except Exception:
             return {"_raw": args}
@@ -68,6 +438,10 @@ def _is_error_result(content: str) -> bool:
     return False
 
 
+# ══════════════════════════════════════════════════════════════
+#  Rule-based reward (Mode B fallback)
+# ══════════════════════════════════════════════════════════════
+
 def generic_rule_reward(
     turn_index: int,
     turn: dict,
@@ -75,396 +449,66 @@ def generic_rule_reward(
     all_turns: list[dict],
     task_id: str,
 ) -> float:
-    """Compute generic behavior rule reward for one assistant turn.
-
-    Returns reward in [-0.5, +0.3].
-    """
+    """Mode B: rule-based process reward. Fast, no LLM call."""
     content = turn.get("content", "")
     tool_name = _get_tool_name(turn)
-    tool_args = _get_tool_args(turn)
     reward = 0.0
 
-    # ── Positive signals ──
-
-    # Used a tool (good — agent is taking action)
     if tool_name:
         reward += 0.05
 
-    # Tool succeeded (next turn is tool result without error)
     next_turns = all_turns[turn_index + 1:]
-    tool_results = []
     for t in next_turns:
         if t.get("role") == "tool":
-            tool_results.append(t)
-        else:
-            break
-    for tr in tool_results:
-        tr_content = tr.get("content", "")
-        if tr_content.strip() and not _is_error_result(tr_content):
-            reward += 0.05
-
-    # Read before write/edit (information gathering)
-    if tool_name in ("write", "edit"):
-        has_prior_read = any(
-            _get_tool_name(t) == "read"
-            for t in prev_turns
-            if t.get("role") == "assistant"
-        )
-        if has_prior_read:
-            reward += 0.05
-
-    # Verification: read after write
-    if tool_name == "read" and turn_index > 0:
-        prev_assistant = [
-            t for t in prev_turns if t.get("role") == "assistant"
-        ]
-        if prev_assistant:
-            last_tool = _get_tool_name(prev_assistant[-1])
-            if last_tool in ("write", "edit"):
+            tr_content = t.get("content", "")
+            if tr_content.strip() and not _is_error_result(tr_content):
                 reward += 0.05
+            elif _is_error_result(tr_content):
+                reward -= 0.10
+            break
+        elif t.get("role") == "assistant":
+            break
 
-    # Web search with relevant query
-    if tool_name == "web_search":
-        query = tool_args.get("query", "")
-        if query and len(query) > 5:
-            reward += 0.03
-
-    # ── Negative signals ──
-
-    # Empty response without tool call
     if not content.strip() and not tool_name:
         reward -= 0.30
 
-    # Hallucination patterns
-    hallucination_patterns = [
-        r"I don'?t have access to",
-        r"I cannot access",
-        r"As an AI",
-        r"I'?m unable to",
-    ]
+    hallucination_patterns = [r"I don'?t have access to", r"As an AI", r"I'?m unable to"]
     for p in hallucination_patterns:
         if re.search(p, content, re.IGNORECASE):
             reward -= 0.30
             break
 
-    # Repeated failed command (same tool + same args + previous error)
-    if tool_name and len(prev_turns) >= 2:
-        prev_assistants = [
-            t for t in prev_turns if t.get("role") == "assistant"
-        ]
-        if prev_assistants:
-            prev_tool = _get_tool_name(prev_assistants[-1])
-            prev_args = _get_tool_args(prev_assistants[-1])
-            if prev_tool == tool_name and prev_args == tool_args:
-                # Check if previous tool result was an error
-                prev_idx = all_turns.index(prev_assistants[-1])
-                for t in all_turns[prev_idx + 1:]:
-                    if t.get("role") == "tool":
-                        if _is_error_result(t.get("content", "")):
-                            reward -= 0.30
-                        break
-                    elif t.get("role") == "assistant":
-                        break
-
-    # Tool error in result
-    for tr in tool_results:
-        if _is_error_result(tr.get("content", "")):
-            reward -= 0.10
-
     return max(-0.5, min(0.3, reward))
 
 
-# ── Oracle reward (Mode C): reference trajectory matching ──
+# ══════════════════════════════════════════════════════════════
+#  Main reward computation
+# ══════════════════════════════════════════════════════════════
 
-# Reference trajectories encoded as structured step sequences
-REFERENCE_TRAJECTORIES: dict[str, dict[str, Any]] = {
-    "task_02_stock": {
-        "min_turns": 3,
-        "expected_tools": ["web_search", "write"],
-        "key_milestones": [
-            {"tool": "web_search", "args_pattern": r"stock|AAPL|price|Apple", "reward": 0.15},
-            {"tool": "write", "args_pattern": r"stock_report", "reward": 0.25},
-        ],
-        "anti_patterns": [
-            {"condition": "write_before_search", "penalty": -0.40},
-        ],
-        "content_quality": {
-            "write": {"min_bytes": 200, "must_match": [r"\$?\d+\.?\d*", r"\d{4}"]},
-        },
-    },
-    "task_12_skill_search": {
-        "min_turns": 5,
-        "expected_tools": ["read", "edit"],
-        "key_milestones": [
-            {"tool": "read", "args_pattern": r"config/", "reward": 0.15},
-            {"tool": "edit", "args_pattern": r"config/", "reward": 0.15},
-            {"tool": "read", "args_pattern": r"config/", "reward": 0.10, "after": "edit"},
-        ],
-        "anti_patterns": [
-            {"condition": "sed_without_read", "penalty": -0.30},
-            {"condition": "repeated_failure", "penalty": -0.40},
-        ],
-    },
-    "task_10_workflow": {
-        "min_turns": 3,
-        "expected_tools": ["read", "write"],
-        "key_milestones": [
-            {"tool": "read", "args_pattern": r"config\.json", "reward": 0.15},
-            {"tool": "write", "args_pattern": r"\.py$", "reward": 0.15},
-            {"tool": "write", "args_pattern": r"NOTES|notes", "reward": 0.15},
-        ],
-        "content_quality": {
-            "write_py": {"min_bytes": 500, "must_match": [r"import requests", r"import json"]},
-            "write_notes": {"min_bytes": 500},
-        },
-    },
-    "task_22_second_brain": {
-        "min_turns": 4,
-        "expected_tools": ["read", "write"],
-        "key_milestones": [
-            {"tool": "read", "args_pattern": r".", "reward": 0.15},
-            {"tool": "write", "args_pattern": r".", "reward": 0.15},
-        ],
-        "anti_patterns": [
-            {"condition": "write_before_read", "penalty": -0.20},
-        ],
-    },
-    "task_16_email_triage": {
-        "min_turns": 5,
-        "expected_tools": ["read", "write"],
-        "key_milestones": [
-            {"tool": "read", "args_pattern": r"email|mail", "reward": 0.10, "repeatable": True},
-            {"tool": "write", "args_pattern": r".", "reward": 0.15},
-        ],
-    },
-    "task_19_spreadsheet_summary": {
-        "min_turns": 4,
-        "expected_tools": ["read", "exec", "write"],
-        "key_milestones": [
-            {"tool": "read", "args_pattern": r"\.(csv|xlsx)", "reward": 0.15},
-            {"tool": "exec", "args_pattern": r"python|awk|pandas|cut", "reward": 0.15},
-            {"tool": "write", "args_pattern": r"summary|report", "reward": 0.15},
-        ],
-        "anti_patterns": [
-            {"condition": "write_without_exec_after_binary", "penalty": -0.40},
-        ],
-    },
-    "task_18_market_research": {
-        "min_turns": 4,
-        "expected_tools": ["web_search", "write"],
-        "key_milestones": [
-            {"tool": "web_search", "args_pattern": r"market|APM|observability", "reward": 0.10},
-            {"tool": "web_search", "args_pattern": r"vs|comparison|competitor", "reward": 0.10},
-            {"tool": "write", "args_pattern": r"market_research", "reward": 0.15},
-        ],
-        "content_quality": {
-            "write": {"min_bytes": 5000},
-        },
-        "anti_patterns": [
-            {"condition": "single_search", "penalty": -0.20},
-            {"condition": "outdated_year", "penalty": -0.20},
-        ],
-    },
-    "task_24_polymarket_briefing": {
-        "min_turns": 4,
-        "expected_tools": ["web_search", "write"],
-        "key_milestones": [
-            {"tool": "web_search", "args_pattern": r"[Pp]olymarket", "reward": 0.15},
-            {"tool": "web_search", "args_pattern": r".", "reward": 0.05, "repeatable": True},
-            {"tool": "write", "args_pattern": r"polymarket_briefing", "reward": 0.15},
-        ],
-        "content_quality": {
-            "write": {"min_bytes": 1200, "must_match": [r"## 1", r"## 2", r"## 3"]},
-        },
-        "anti_patterns": [
-            {"condition": "outdated_year", "penalty": -0.20},
-        ],
-    },
-}
-
-
-def _check_milestone(
-    turn: dict,
-    milestone: dict,
-    achieved_milestones: set[str],
-    prev_turns: list[dict],
-) -> float:
-    """Check if this turn matches a reference milestone."""
-    tool_name = _get_tool_name(turn)
-    tool_args = _get_tool_args(turn)
-
-    expected_tool = milestone["tool"]
-    args_pattern = milestone.get("args_pattern", r".")
-
-    if tool_name != expected_tool:
-        return 0.0
-
-    # Check args pattern against all string values in arguments
-    args_str = " ".join(str(v) for v in tool_args.values()) if tool_args else ""
-    if not re.search(args_pattern, args_str, re.IGNORECASE):
-        return 0.0
-
-    # Check ordering constraint
-    if "after" in milestone:
-        required_prior = milestone["after"]
-        if required_prior not in achieved_milestones:
-            return 0.0
-
-    milestone_key = f"{expected_tool}:{args_pattern}"
-    if not milestone.get("repeatable", False) and milestone_key in achieved_milestones:
-        return 0.0
-
-    achieved_milestones.add(milestone_key)
-    return milestone.get("reward", 0.10)
-
-
-def _check_anti_patterns(
-    turn: dict,
-    turn_index: int,
-    all_turns: list[dict],
-    task_ref: dict,
-) -> float:
-    """Check for anti-patterns in the trajectory up to this turn."""
-    penalty = 0.0
-    tool_name = _get_tool_name(turn)
-    tool_args = _get_tool_args(turn)
-    prev_assistants = [
-        t for t in all_turns[:turn_index] if t.get("role") == "assistant"
-    ]
-
-    for ap in task_ref.get("anti_patterns", []):
-        cond = ap["condition"]
-
-        if cond == "write_before_search" and tool_name == "write":
-            if not any(_get_tool_name(t) in ("web_search", "web_fetch") for t in prev_assistants):
-                penalty += ap["penalty"]
-
-        elif cond == "write_before_read" and tool_name == "write":
-            if not any(_get_tool_name(t) == "read" for t in prev_assistants):
-                penalty += ap["penalty"]
-
-        elif cond == "sed_without_read" and tool_name == "exec":
-            cmd = tool_args.get("command", tool_args.get("_raw", ""))
-            if "sed" in str(cmd):
-                if not any(_get_tool_name(t) == "read" for t in prev_assistants):
-                    penalty += ap["penalty"]
-
-        elif cond == "repeated_failure":
-            # Already handled in generic rules
-            pass
-
-        elif cond == "single_search" and tool_name == "write":
-            search_count = sum(
-                1 for t in prev_assistants if _get_tool_name(t) == "web_search"
-            )
-            if search_count < 2:
-                penalty += ap["penalty"]
-
-        elif cond == "outdated_year" and tool_name == "web_search":
-            query = str(tool_args.get("query", ""))
-            if re.search(r"20(2[0-4]|1\d)", query):
-                penalty += ap["penalty"]
-
-        elif cond == "write_without_exec_after_binary" and tool_name == "write":
-            saw_binary = False
-            saw_exec = False
-            for t in prev_assistants:
-                if _get_tool_name(t) == "read":
-                    idx = all_turns.index(t)
-                    for tr in all_turns[idx + 1:]:
-                        if tr.get("role") == "tool":
-                            c = tr.get("content", "")
-                            if "\x00" in c or len(c) > 500 and c.count("\\x") > 10:
-                                saw_binary = True
-                            break
-                        elif tr.get("role") == "assistant":
-                            break
-                if _get_tool_name(t) == "exec":
-                    saw_exec = True
-            if saw_binary and not saw_exec:
-                penalty += ap["penalty"]
-
-    return penalty
-
-
-def _check_content_quality(
-    turn: dict,
-    task_ref: dict,
-) -> float:
-    """Check content quality for write operations."""
-    tool_name = _get_tool_name(turn)
-    if tool_name != "write":
-        return 0.0
-
-    content = str(_get_tool_args(turn).get("content", ""))
-    quality_checks = task_ref.get("content_quality", {})
-    reward = 0.0
-
-    for _key, spec in quality_checks.items():
-        min_bytes = spec.get("min_bytes", 0)
-        if len(content.encode("utf-8")) >= min_bytes:
-            reward += 0.05
-        else:
-            reward -= 0.10
-
-        for pattern in spec.get("must_match", []):
-            if re.search(pattern, content):
-                reward += 0.03
-
-    return reward
-
-
-def oracle_reward(
-    turn_index: int,
-    turn: dict,
-    prev_turns: list[dict],
-    all_turns: list[dict],
-    task_id: str,
-    achieved_milestones: set[str],
-) -> float:
-    """Compute oracle (open-eye) reward using reference trajectory.
-
-    Only active when task_id has a reference trajectory.
-    Returns additional reward on top of generic rules.
-    """
-    task_ref = REFERENCE_TRAJECTORIES.get(task_id)
-    if task_ref is None:
-        return 0.0
-
-    reward = 0.0
-
-    # Milestone matching
-    for milestone in task_ref.get("key_milestones", []):
-        reward += _check_milestone(turn, milestone, achieved_milestones, prev_turns)
-
-    # Anti-pattern penalties
-    reward += _check_anti_patterns(turn, turn_index, all_turns, task_ref)
-
-    # Content quality
-    reward += _check_content_quality(turn, task_ref)
-
-    return max(-0.5, min(0.3, reward))
-
-
-# ── Main reward computation ──
-
-def compute_episode_rewards(
+async def compute_episode_rewards_async(
     trajectory: list[dict[str, Any]],
     terminal_success: bool,
     task_id: str,
-    mode: str = "oracle",
+    task_prompt: str = "",
+    mode: str = "self-judge",
+    vllm_base_url: str = "http://localhost:8000/v1",
+    judge_model: str = "Qwen3-4B",
+    judge_api_key: str = "dummy",
 ) -> list[float]:
-    """Compute per-assistant-turn rewards for a full episode.
+    """Compute per-assistant-turn rewards for a full episode (async version).
 
     Args:
         trajectory: list of message dicts (all roles)
         terminal_success: whether PinchBench grading passed
         task_id: PinchBench task ID
-        mode: "baseline" (A), "rule" (B), or "oracle" (C)
+        task_prompt: original task prompt text
+        mode: "baseline" (A), "rule" (B), "self-judge" (C), or "oracle-judge" (D)
+        vllm_base_url: vLLM endpoint for self-judge
+        judge_model: model name for judge calls
+        judge_api_key: API key for judge calls
 
     Returns:
-        List of rewards, one per assistant turn. Terminal reward is added
-        to the last turn.
+        List of rewards, one per assistant turn. Terminal reward added to last.
     """
     terminal_reward = 1.0 if terminal_success else -1.0
 
@@ -475,8 +519,11 @@ def compute_episode_rewards(
     if not assistant_indices:
         return [terminal_reward]
 
+    # Get expected number of turns from rubric
+    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+    expected_turns = len(rubric.get("reference_steps", [4]))
+
     rewards = []
-    achieved_milestones: set[str] = set()
 
     for seq_idx, turn_idx in enumerate(assistant_indices):
         turn = trajectory[turn_idx]
@@ -484,18 +531,50 @@ def compute_episode_rewards(
 
         if mode == "baseline":
             r = 0.0
+
         elif mode == "rule":
             r = generic_rule_reward(turn_idx, turn, prev_turns, trajectory, task_id)
-        elif mode == "oracle":
-            r_generic = generic_rule_reward(turn_idx, turn, prev_turns, trajectory, task_id)
-            r_oracle = oracle_reward(
-                turn_idx, turn, prev_turns, trajectory, task_id, achieved_milestones
+
+        elif mode in ("self-judge", "oracle-judge"):
+            # Get tool result for this turn (if any)
+            tool_result = None
+            for t in trajectory[turn_idx + 1:]:
+                if t.get("role") == "tool":
+                    tool_result = t.get("content", "")
+                    break
+                elif t.get("role") == "assistant":
+                    break
+
+            prm_prompt = build_prm_prompt(
+                task_id=task_id,
+                task_prompt=task_prompt,
+                turn_index=seq_idx,
+                total_turns=max(expected_turns, len(assistant_indices)),
+                current_turn=turn,
+                prev_turns=prev_turns,
+                tool_result=tool_result,
+                mode=mode,
             )
-            r = r_generic + r_oracle
+
+            if mode == "oracle-judge":
+                # Use qwen-plus API for scoring
+                base_url = vllm_base_url  # will be overridden by caller
+                model = judge_model
+            else:
+                # Self-judge: use the same vLLM (Qwen3-4B)
+                base_url = vllm_base_url
+                model = judge_model
+
+            r = await call_llm_judge(
+                prm_prompt,
+                vllm_base_url=base_url,
+                model=model,
+                api_key=judge_api_key,
+            )
+
         else:
             r = 0.0
 
-        # Clamp per-turn process reward
         r = max(-0.5, min(0.3, r))
         rewards.append(r)
 
@@ -505,19 +584,89 @@ def compute_episode_rewards(
     return rewards
 
 
+def compute_episode_rewards(
+    trajectory: list[dict[str, Any]],
+    terminal_success: bool,
+    task_id: str,
+    mode: str = "self-judge",
+    task_prompt: str = "",
+    vllm_base_url: str = "http://localhost:8000/v1",
+    judge_model: str = "Qwen3-4B",
+    judge_api_key: str = "dummy",
+) -> list[float]:
+    """Synchronous version of compute_episode_rewards.
+
+    For modes requiring LLM calls, uses sync HTTP.
+    """
+    terminal_reward = 1.0 if terminal_success else -1.0
+
+    assistant_indices = [
+        i for i, t in enumerate(trajectory) if t.get("role") == "assistant"
+    ]
+
+    if not assistant_indices:
+        return [terminal_reward]
+
+    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+    expected_turns = len(rubric.get("reference_steps", [4]))
+
+    rewards = []
+
+    for seq_idx, turn_idx in enumerate(assistant_indices):
+        turn = trajectory[turn_idx]
+        prev_turns = trajectory[:turn_idx]
+
+        if mode == "baseline":
+            r = 0.0
+
+        elif mode == "rule":
+            r = generic_rule_reward(turn_idx, turn, prev_turns, trajectory, task_id)
+
+        elif mode in ("self-judge", "oracle-judge"):
+            tool_result = None
+            for t in trajectory[turn_idx + 1:]:
+                if t.get("role") == "tool":
+                    tool_result = t.get("content", "")
+                    break
+                elif t.get("role") == "assistant":
+                    break
+
+            prm_prompt = build_prm_prompt(
+                task_id=task_id,
+                task_prompt=task_prompt,
+                turn_index=seq_idx,
+                total_turns=max(expected_turns, len(assistant_indices)),
+                current_turn=turn,
+                prev_turns=prev_turns,
+                tool_result=tool_result,
+                mode=mode,
+            )
+
+            r = call_llm_judge_sync(
+                prm_prompt,
+                vllm_base_url=vllm_base_url,
+                model=judge_model,
+                api_key=judge_api_key,
+            )
+
+        else:
+            r = 0.0
+
+        r = max(-0.5, min(0.3, r))
+        rewards.append(r)
+
+    rewards[-1] += terminal_reward
+    return rewards
+
+
 def compute_score(
     data_source: str,
     solution_str: str,
     ground_truth: Any,
     extra_info: Optional[dict] = None,
 ) -> float:
-    """veRL-compatible reward function entry point.
-
-    Called by veRL's reward pipeline. Returns a single scalar.
-    For per-turn rewards, use compute_episode_rewards() directly.
-    """
+    """veRL-compatible reward function entry point (terminal only)."""
     if extra_info is None:
         extra_info = {}
-
     terminal_success = bool(extra_info.get("terminal_success", False))
     return 1.0 if terminal_success else -1.0

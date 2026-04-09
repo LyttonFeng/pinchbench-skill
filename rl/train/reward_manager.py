@@ -66,7 +66,10 @@ class PinchBenchRewardManager(AbstractRewardManager):
         self.tokenizer = tokenizer
         self.num_examine = num_examine
         self.reward_fn_key = reward_fn_key
-        self.reward_mode = os.environ.get("REWARD_MODE", "oracle")
+        self.reward_mode = os.environ.get("REWARD_MODE", "self-judge")
+        self.prm_vllm_base_url = os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1")
+        self.prm_model = os.environ.get("PRM_MODEL", "Qwen3-4B")
+        self.prm_api_key = os.environ.get("PRM_API_KEY", "dummy")
 
         im_end_ids = tokenizer.encode("<|im_end|>", add_special_tokens=False)
         self.im_end_token_id = im_end_ids[-1] if im_end_ids else None
@@ -111,9 +114,15 @@ class PinchBenchRewardManager(AbstractRewardManager):
                 reward_extra_info["reward_mode"].append("fallback")
                 continue
 
-            # Compute per-turn rewards using the rubric engine
+            # Compute per-turn rewards using self-judge (Qwen3-4B via vLLM)
+            task_prompt = extra_info.get("task_prompt", "")
             per_turn_rewards = compute_episode_rewards(
-                trajectory, terminal_success, task_id, mode=reward_mode,
+                trajectory, terminal_success, task_id,
+                mode=reward_mode,
+                task_prompt=task_prompt,
+                vllm_base_url=self.prm_vllm_base_url,
+                judge_model=self.prm_model,
+                judge_api_key=self.prm_api_key,
             )
 
             if not per_turn_rewards:
