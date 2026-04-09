@@ -185,16 +185,15 @@ async def run_task(task_id: str, max_turns: int = 15):
         await proc.communicate()
 
     # Sync workspace files from ECS for grading
+    import os, subprocess as sp
     local_ws = f"/tmp/pinchbench_local/{task_id}"
+    os.makedirs(local_ws, exist_ok=True)
     logger.info("Syncing workspace from ECS %s → %s ...", ws, local_ws)
-    sync = await asyncio.create_subprocess_exec(
-        "rsync", "-az", "-e",
-        f"ssh -o StrictHostKeyChecking=no -i {SSH_KEY}",
-        f"root@{ECS_HOST}:{ws}/", f"{local_ws}/",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    sp.run(
+        ["scp", "-o", "StrictHostKeyChecking=no", "-i", SSH_KEY, "-r",
+         f"root@{ECS_HOST}:{ws}/.", local_ws],
+        capture_output=True, timeout=30,
     )
-    await asyncio.wait_for(sync.communicate(), timeout=30)
-    import os
     local_files = os.listdir(local_ws) if os.path.exists(local_ws) else []
     logger.info("Synced %d files: %s", len(local_files), local_files[:10])
 
