@@ -334,13 +334,17 @@ class OpenClawAgentLoop(AgentLoopBase):
                 "models": [{"id": "verl-proxy", "name": "verl-proxy"}],
             }},
             "defaultProvider": "verl", "defaultModel": "verl-proxy",
-        })
+        }, indent=2)
+        agent_dir = f"$HOME/.openclaw/agents/{agent_id}/agent"
+        # Use base64 to avoid any shell quoting issues with JSON
+        import base64
+        b64 = base64.b64encode(models_json.encode()).decode()
         return " && ".join([
             f"mkdir -p {workspace}",
             f"openclaw agents add {agent_id} --model verl-proxy --workspace {workspace} --non-interactive 2>/dev/null || true",
-            f"mkdir -p ~/.openclaw/agents/{agent_id}/agent",
-            f"echo '{models_json}' > ~/.openclaw/agents/{agent_id}/agent/models.json",
-            f"rm -f ~/.openclaw/agents/{agent_id}/sessions/sessions.json",
+            f"mkdir -p {agent_dir}",
+            f"echo {b64} | base64 -d > {agent_dir}/models.json",
+            f"rm -f $HOME/.openclaw/agents/{agent_id}/sessions/sessions.json",
         ])
 
     def _prepare_workspace(self, task_id: str, workspace: Path) -> None:
