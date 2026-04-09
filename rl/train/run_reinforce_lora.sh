@@ -42,9 +42,14 @@ VAL_FILE="${DATA_DIR}/val.parquet"
 MODEL="${VERL_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${VERL_N_GPUS:-1}"
 
+# ── Python path (确保 rl 包可以被 import) ──
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
+# 使用 SDPA 代替 FlashAttention2（避免 flash_attn 包兼容性问题）
+export ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
+
 # ── 训练超参 ──
 BATCH_SIZE="${BATCH_SIZE:-8}"          # 8 个 task 各 1 条
-MICRO_BATCH="${MICRO_BATCH:-2}"        # L4 显存限制
+MICRO_BATCH="${MICRO_BATCH:-4}"        # L40S 48GB VRAM
 LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
@@ -82,7 +87,7 @@ export PRM_API_KEY="${PRM_API_KEY:-dummy}"
 mkdir -p "${OUTPUT_DIR}"
 
 python3 -m verl.trainer.main_ppo \
-    algorithm.adv_estimator=gpg \
+    algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${VAL_FILE}" \
     data.train_batch_size="${BATCH_SIZE}" \
@@ -93,6 +98,7 @@ python3 -m verl.trainer.main_ppo \
     data.return_raw_chat=True \
     actor_rollout_ref.model.path="${MODEL}" \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.model.lora_rank="${LORA_RANK}" \
     actor_rollout_ref.model.lora_alpha="${LORA_ALPHA}" \
     actor_rollout_ref.model.target_modules=all-linear \
@@ -117,14 +123,14 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.multi_turn.enable=True \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=30 \
-    actor_rollout_ref.rollout.agent_loop.default_agent_loop=openclaw_agent \
-    actor_rollout_ref.rollout.agent_loop.agent_loop_config_path="${AGENT_LOOP_CONFIG}" \
-    actor_rollout_ref.rollout.agent_loop.num_workers=4 \
+    actor_rollout_ref.rollout.agent.default_agent_loop=openclaw_agent \
+    actor_rollout_ref.rollout.agent.agent_loop_config_path="${AGENT_LOOP_CONFIG}" \
+    actor_rollout_ref.rollout.agent.num_workers=2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
-    reward.reward_manager.path="${REWARD_MANAGER_PATH}" \
-    reward.reward_manager.name=PinchBenchRewardManager \
+    reward.custom_reward_function.path="${REWARD_MANAGER_PATH}" \
+    reward.custom_reward_function.name=compute_score \
     trainer.critic_warmup=0 \
     trainer.logger='["console"]' \
     trainer.project_name=pinchbench_rl \
@@ -133,5 +139,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=5 \
-    trainer.total_epochs=50 \
+    trainer.total_epochs=5 \
     trainer.default_local_dir="${OUTPUT_DIR}"
