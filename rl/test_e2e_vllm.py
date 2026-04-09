@@ -1,10 +1,14 @@
 """
 End-to-end test: vLLM (Qwen3-4B on RunPod) → ModelProxy → SSH reverse tunnel → OpenClaw (ECS) → PinchBench grading.
 
-Usage (on RunPod):
+Prerequisites (on RunPod):
+    # Start vLLM with tool-calling support (MUST use this script, not raw vllm command):
+    bash rl/scripts/start_vllm.sh /workspace/hf_cache/hub/models--Qwen--Qwen3-4B/snapshots/<hash>
+
+Usage:
     export PYTHONPATH="/workspace/pinchbench-skill:$PYTHONPATH"
     python3 rl/test_e2e_vllm.py --task task_00_sanity
-    python3 rl/test_e2e_vllm.py --task task_02_stock
+    python3 rl/test_e2e_vllm.py --task task_01_calendar
 """
 
 from __future__ import annotations
@@ -33,9 +37,8 @@ PINCHBENCH_DIR = "/workspace/pinchbench-skill"
 async def forward_to_vllm(messages: list, tools: list | None, max_tokens: int = 4096) -> dict:
     """Forward a chat completion request to the local vLLM server.
     
-    Note: tools are intentionally NOT forwarded to vLLM because vLLM requires
-    --enable-auto-tool-choice which adds complexity. Instead, Qwen3-4B will
-    produce tool calls as text in its response, and OpenClaw will parse them.
+    Requires vLLM started with --enable-auto-tool-choice --tool-call-parser hermes
+    (use rl/scripts/start_vllm.sh).
     """
     capped = min(max_tokens, 4096)
     payload = {
@@ -44,6 +47,8 @@ async def forward_to_vllm(messages: list, tools: list | None, max_tokens: int = 
         "max_tokens": capped,
         "temperature": 0.7,
     }
+    if tools:
+        payload["tools"] = tools
 
     async with aiohttp.ClientSession() as session:
         async with session.post(VLLM_URL, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as resp:

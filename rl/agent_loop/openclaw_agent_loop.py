@@ -380,8 +380,12 @@ class OpenClawAgentLoop(AgentLoopBase):
             if str(scripts_dir) not in sys.path:
                 sys.path.insert(0, str(scripts_dir))
             from lib_tasks import TaskLoader
-            loader = TaskLoader(Path(self.oc_config.pinchbench_dir) / "tasks")
-            task = loader.get_task(task_id)
+            tasks_dir = Path(self.oc_config.pinchbench_dir) / "tasks"
+            loader = TaskLoader(tasks_dir)
+            task_file = tasks_dir / f"{task_id}.md"
+            if not task_file.exists():
+                return
+            task = loader.load_task(task_file)
             if task is None:
                 return
             if workspace.exists():
@@ -450,8 +454,12 @@ class OpenClawAgentLoop(AgentLoopBase):
                 sys.path.insert(0, str(scripts_dir))
             from lib_tasks import TaskLoader
             from lib_grading import grade_task
-            loader = TaskLoader(Path(self.oc_config.pinchbench_dir) / "tasks")
-            task = loader.get_task(task_id)
+            tasks_dir = Path(self.oc_config.pinchbench_dir) / "tasks"
+            loader = TaskLoader(tasks_dir)
+            task_file = tasks_dir / f"{task_id}.md"
+            if not task_file.exists():
+                return False
+            task = loader.load_task(task_file)
             if task is None:
                 return False
             workspace = Path(self.oc_config.workspace_base) / task_id
