@@ -31,15 +31,18 @@ PINCHBENCH_DIR = "/workspace/pinchbench-skill"
 
 
 async def forward_to_vllm(messages: list, tools: list | None, max_tokens: int = 4096) -> dict:
-    """Forward a chat completion request to the local vLLM server."""
+    """Forward a chat completion request to the local vLLM server.
+    
+    Note: tools are intentionally NOT forwarded to vLLM because vLLM requires
+    --enable-auto-tool-choice which adds complexity. Instead, Qwen3-4B will
+    produce tool calls as text in its response, and OpenClaw will parse them.
+    """
     payload = {
         "model": VLLM_MODEL,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.7,
     }
-    if tools:
-        payload["tools"] = tools
 
     async with aiohttp.ClientSession() as session:
         async with session.post(VLLM_URL, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as resp:
@@ -219,7 +222,7 @@ async def run_task(task_id: str, max_turns: int = 15):
         from lib_grading import grade_task
 
         loader = TaskLoader(Path(PINCHBENCH_DIR) / "tasks")
-        task = loader.get_task(task_id)
+        task = loader.load_task(Path(PINCHBENCH_DIR) / "tasks" / f"{task_id}.md")
         if task is None:
             logger.error("Task %s not found by loader", task_id)
         else:
