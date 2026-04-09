@@ -36,6 +36,11 @@ from verl.experimental.agent_loop.agent_loop import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setLevel(logging.DEBUG)
+    logger.addHandler(_h)
 
 
 @dataclass
@@ -91,6 +96,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         from .model_proxy import ModelProxy, ModelRequest
         from .trajectory import TrajectoryReconstructor, TurnRecord
 
+        print(f"[OpenClawAgentLoop.run] START kwargs keys={list(kwargs.keys())}", flush=True)
         logger.info("[run] START kwargs keys=%s, sampling_params=%s", list(kwargs.keys()), sampling_params)
 
         raw_prompt = kwargs.get("raw_prompt", [])
@@ -102,12 +108,14 @@ class OpenClawAgentLoop(AgentLoopBase):
             if last_user:
                 task_prompt = last_user[-1].get("content", "")
 
+        print(f"[OpenClawAgentLoop.run] task_id={task_id}, host={self.oc_config.host}, prompt_len={len(task_prompt)}", flush=True)
         logger.info("[run] task_id=%s, host=%s, prompt_len=%d", task_id, self.oc_config.host, len(task_prompt))
 
         session_id = f"rl-{uuid.uuid4().hex[:8]}"
 
         proxy = ModelProxy(host=self.oc_config.proxy_bind_host, port=0)
         proxy_port = await proxy.start()
+        print(f"[OpenClawAgentLoop.run] ModelProxy started on port {proxy_port}", flush=True)
         logger.info("[run] ModelProxy started on port %d", proxy_port)
 
         all_prompt_ids: list[int] = []
