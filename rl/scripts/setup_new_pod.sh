@@ -63,14 +63,30 @@ fi
 # ── 2. 安装依赖 ──
 echo ""
 echo "[2/6] 安装 Python 依赖..."
-pip install -q \
+
+# 2a. 先升级 PyTorch 到 2.10 (vllm 0.19.0 要求)
+echo "  安装 PyTorch 2.10 (cu128)..."
+pip install --break-system-packages \
+    torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# 2b. 安装 vllm（会拉大量子依赖）
+echo "  安装 vllm..."
+pip install --break-system-packages vllm==0.19.0
+
+# 2c. flash-attn：使用预编译 wheel，绝对不要从源码编译（会卡死 CPU 几十分钟）
+#     预编译 wheel 来源: https://github.com/lesj0610/flash-attention/releases
+echo "  安装 flash-attn (预编译 wheel, 不编译!)..."
+pip install --break-system-packages \
+    "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp312/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+
+# 2d. verl + 其他依赖
+echo "  安装 verl 及其他依赖..."
+pip install --break-system-packages \
     verl==0.7.1 \
-    vllm==0.19.0 \
-    transformers \
     peft \
     accelerate \
-    datasets \
-    aiohttp
+    "datasets>=3.0"
 
 echo "✓ 依赖安装完成"
 
