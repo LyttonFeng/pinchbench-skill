@@ -37,10 +37,12 @@ async def forward_to_vllm(messages: list, tools: list | None, max_tokens: int = 
     --enable-auto-tool-choice which adds complexity. Instead, Qwen3-4B will
     produce tool calls as text in its response, and OpenClaw will parse them.
     """
+    # vLLM max_model_len=8192; leave room for prompt tokens
+    capped = min(max_tokens, 2048)
     payload = {
         "model": VLLM_MODEL,
         "messages": messages,
-        "max_tokens": min(max_tokens, 4096),
+        "max_tokens": capped,
         "temperature": 0.7,
     }
 
