@@ -184,6 +184,20 @@ async def run_task(task_id: str, max_turns: int = 15):
         proc.kill()
         await proc.communicate()
 
+    # Sync workspace files from ECS for grading
+    local_ws = f"/tmp/pinchbench_local/{task_id}"
+    logger.info("Syncing workspace from ECS %s → %s ...", ws, local_ws)
+    sync = await asyncio.create_subprocess_exec(
+        "rsync", "-az", "-e",
+        f"ssh -o StrictHostKeyChecking=no -i {SSH_KEY}",
+        f"root@{ECS_HOST}:{ws}/", f"{local_ws}/",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    await asyncio.wait_for(sync.communicate(), timeout=30)
+    import os
+    local_files = os.listdir(local_ws) if os.path.exists(local_ws) else []
+    logger.info("Synced %d files: %s", len(local_files), local_files[:10])
+
     # Fetch and grade transcript
     logger.info("Fetching transcript from ECS...")
     check = await asyncio.create_subprocess_exec(
@@ -230,7 +244,7 @@ async def run_task(task_id: str, max_turns: int = 15):
             execution_result = {
                 "status": "completed",
                 "transcript": transcript,
-                "workspace": ws,
+                "workspace": local_ws,
             }
             result = grade_task(
                 task=task,
