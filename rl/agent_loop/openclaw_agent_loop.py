@@ -91,6 +91,8 @@ class OpenClawAgentLoop(AgentLoopBase):
         from .model_proxy import ModelProxy, ModelRequest
         from .trajectory import TrajectoryReconstructor, TurnRecord
 
+        logger.info("[run] START kwargs keys=%s, sampling_params=%s", list(kwargs.keys()), sampling_params)
+
         raw_prompt = kwargs.get("raw_prompt", [])
         extra_info = kwargs.get("extra_info", {})
         task_id = extra_info.get("task_id", "unknown")
@@ -100,10 +102,13 @@ class OpenClawAgentLoop(AgentLoopBase):
             if last_user:
                 task_prompt = last_user[-1].get("content", "")
 
+        logger.info("[run] task_id=%s, host=%s, prompt_len=%d", task_id, self.oc_config.host, len(task_prompt))
+
         session_id = f"rl-{uuid.uuid4().hex[:8]}"
 
         proxy = ModelProxy(host=self.oc_config.proxy_bind_host, port=0)
         proxy_port = await proxy.start()
+        logger.info("[run] ModelProxy started on port %d", proxy_port)
 
         all_prompt_ids: list[int] = []
         all_response_ids: list[int] = []
@@ -119,19 +124,24 @@ class OpenClawAgentLoop(AgentLoopBase):
 
         try:
             if self.oc_config.host in ("localhost", "127.0.0.1"):
+                logger.info("[run] Starting local OpenClaw for task=%s", task_id)
                 openclaw_proc = await self._start_local_openclaw(
                     task_prompt, session_id, f"http://127.0.0.1:{proxy_port}/v1", task_id,
                 )
             else:
+                logger.info("[run] Starting remote OpenClaw on %s for task=%s", self.oc_config.host, task_id)
                 openclaw_proc = await self._start_remote_openclaw(
                     task_prompt, session_id, proxy_port, task_id,
                 )
+            logger.info("[run] OpenClaw started pid=%s, waiting for first request...", openclaw_proc.pid)
 
             while turn_count < self.oc_config.max_turns:
                 try:
+                    logger.info("[run] Waiting for proxy request (turn=%d, timeout=%.0fs)...", turn_count, self.oc_config.agent_timeout)
                     req: ModelRequest = await asyncio.wait_for(
                         proxy.get_request(), timeout=self.oc_config.agent_timeout
                     )
+                    logger.info("[run] Got proxy request turn=%d messages=%d", turn_count, len(req.messages))
                 except asyncio.TimeoutError:
                     logger.warning("Proxy timeout at turn %d", turn_count)
                     break
@@ -142,10 +152,11 @@ class OpenClawAgentLoop(AgentLoopBase):
                     await proxy.send_response(req)
                     break
 
-                # Apply chat template to tokenize
                 chat_messages = list(req.messages)
                 try:
+                    logger.info("[run] Applying chat template (messages=%d)...", len(chat_messages))
                     prompt_token_ids = await self.apply_chat_template(chat_messages)
+                    logger.info("[run] Chat template done, prompt_ids=%d", len(prompt_token_ids))
                 except Exception as e:
                     logger.error("Chat template failed: %s", e)
                     req.response_error = str(e)
@@ -155,12 +166,13 @@ class OpenClawAgentLoop(AgentLoopBase):
                 if turn_count == 0:
                     all_prompt_ids = list(prompt_token_ids)
 
-                # Generate via veRL's server_manager
+                logger.info("[run] Calling server_manager.generate (turn=%d, prompt_ids=%d)...", turn_count, len(prompt_token_ids))
                 gen_output = await self.server_manager.generate(
                     request_id=uuid.uuid4().hex,
                     prompt_ids=prompt_token_ids,
                     sampling_params=sampling_params,
                 )
+                logger.info("[run] Generate done, got %d tokens", len(gen_output.token_ids) if gen_output.token_ids else 0)
 
                 response_ids = list(gen_output.token_ids)
                 response_logprobs = list(gen_output.log_probs) if gen_output.log_probs else [0.0] * len(response_ids)

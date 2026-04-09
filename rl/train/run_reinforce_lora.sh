@@ -132,6 +132,7 @@ python3 -m verl.trainer.main_ppo \
     reward.custom_reward_function.path="${REWARD_MANAGER_PATH}" \
     reward.custom_reward_function.name=compute_score \
     trainer.critic_warmup=0 \
+    trainer.val_before_train=False \
     trainer.logger='["console"]' \
     trainer.project_name=pinchbench_rl \
     trainer.experiment_name="reinforce_lora_${REWARD_MODE}_$(date +%Y%m%d_%H%M)" \
