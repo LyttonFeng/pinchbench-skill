@@ -165,11 +165,11 @@ Reward 分配 ───────│    找 <|im_end|> 位置                 
                     └─────────────────────────────────────────────────────────────┘
 
                     ┌─────────────────────────────────────────────────────────────┐
-Step 9              │              GRPO Update                                    │
+Step 9              │              REINFORCE Update                                │
 参数更新 ──────────│                                                             │
                     │  攒够 batch_size=8 条 episode 后:                           │
-                    │    ├── 计算 advantages (直接用 reward)                      │
-                    │    ├── GRPO loss (ppo_epochs=2)                             │
+                    │    ├── 计算 advantages (直接用 reward，不需要 baseline)     │
+                    │    ├── REINFORCE policy gradient loss (ppo_epochs=2)        │
                     │    ├── KL penalty (coef=0.05, vs ref model)                │
                     │    └── LoRA 参数更新                                        │
                     │                                                             │
@@ -397,7 +397,7 @@ Wave 2: 4 个 episode 并发 ──────► ~3-5 分钟
 
 PRM scoring: 8 × ~8 turns = ~64 次 vLLM 调用 ──► ~10 秒
 
-GRPO update: forward + backward ──────────────► ~30 秒
+REINFORCE update: forward + backward ─────────► ~30 秒
 
 总计: ~8-12 分钟 / training step
 50 epochs × 8 tasks = 400 episodes ──► ~6-10 小时
@@ -410,7 +410,7 @@ GRPO update: forward + backward ──────────────► ~3
 | OpenClaw episode | 3-5 min | 工具执行 + 网络延迟 |
 | PRM self-judge | ~10 sec | vLLM batch inference |
 | PinchBench grading | ~5-30 sec | automated 快, llm_judge 慢 |
-| GRPO update | ~30 sec | GPU 计算 |
+| REINFORCE update | ~30 sec | GPU 计算 |
 | LoRA sync | ~2 sec | 权重传输 |
 
 **主要瓶颈是 OpenClaw episode 执行时间**，不是 GPU 计算。
@@ -541,7 +541,7 @@ veRL 框架 (不修改源码)
 | `rl/agent_loop/trajectory.py` | 轨迹重建 |
 | `rl/agent_loop/reward.py` | PRM self-judge + rubric |
 | `rl/agent_loop/config.yaml` | veRL 注册配置 |
-| `rl/train/run_grpo_lora.sh` | 训练启动脚本 |
+| `rl/train/run_reinforce_lora.sh` | 训练启动脚本 |
 | `rl/train/prepare_prompts.py` | 数据准备 |
 | `rl/train/reward_manager.py` | veRL reward 适配 |
 | `rl/scripts/setup_ecs.sh` | ECS 初始化 |

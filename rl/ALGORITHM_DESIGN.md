@@ -14,7 +14,7 @@
 
 | 方案 | 问题 |
 |------|------|
-| 离线采集 + GRPO | GRPO 需要同一 prompt 的多次 rollout 计算相对优势。离线数据用的是旧策略，只能用一轮，之后策略已更新，数据过时 |
+| 离线采集 + GRPO | GRPO 需要同一 prompt 的多次 rollout 计算相对优势，不适用于 live-user 的 n=1 场景 |
 | 离线采集 + PG | rollout.n=1 没有 baseline，梯度方差极大，学不动 |
 | **Online RL（当前方案）** | 每个 training step 用当前策略产生新数据，拿到 reward 立即更新 |
 
@@ -31,7 +31,7 @@ Qwen3-4B 在 8 个选定 task 上的 baseline 成功率大部分是 **0%**。如
 ```
 ┌─── RunPod (L4 GPU, 24GB) ─────────────┐
 │                                         │
-│  veRL Trainer (GRPO + LoRA)             │
+│  veRL Trainer (REINFORCE + LoRA)        │
 │    ├── Actor: Qwen3-4B + LoRA (FSDP)   │
 │    ├── Ref Model: Qwen3-4B (CPU)       │
 │    ├── vLLM Rollout Engine (半卡 GPU)   │
@@ -61,11 +61,12 @@ Qwen3-4B 在 8 个选定 task 上的 baseline 成功率大部分是 **0%**。如
 
 ## 3. 算法细节
 
-### 3.1 训练算法：GRPO + LoRA
+### 3.1 训练算法：REINFORCE + LoRA
 
-- **GRPO**（Group Relative Policy Optimization）在 rollout.n=1 下退化为 **REINFORCE**
+- **REINFORCE**：rollout.n=1 的 live-user 场景，每次交互只有一次机会，无法做 group rollout
 - **LoRA**（rank=32, alpha=64, target=all-linear）：参数高效微调，单卡 L4 可跑
 - 不需要 Critic 网络（process reward 已提供密集信号）
+- 不需要 baseline：process reward 自带正负方向，terminal reward 用 {-1, +1}
 
 ### 3.2 一个 Training Step 的完整流程
 
@@ -82,8 +83,8 @@ Step 1: Rollout（攒一个 batch）
   └── 收集 8 条 (prompt_ids, response_ids, mask, rewards)
 
 Step 2: Training（一次参数更新）
-  ├── 计算 advantages（不需要跨 task 做均值/std）
-  ├── GRPO/REINFORCE loss on batch
+  ├── 计算 advantages（直接用 reward，不跨 task 做均值/std）
+  ├── REINFORCE policy gradient loss on batch
   ├── LoRA 参数更新（ppo_epochs=2）
   └── KL penalty（coef=0.05, 防止偏离 ref 太远）
 
@@ -330,7 +331,7 @@ rl/
 │   ├── reward.py                # PRM: self-judge + rubric
 │   └── config.yaml              # veRL agent loop 注册
 ├── train/
-│   ├── run_grpo_lora.sh         # 训练启动脚本
+│   ├── run_reinforce_lora.sh     # 训练启动脚本
 │   ├── prepare_prompts.py       # task prompts → veRL parquet
 │   └── reward_manager.py        # veRL reward manager 适配
 ├── scripts/
@@ -363,11 +364,11 @@ export JUDGE_API_KEY=sk-xxx          # DashScope qwen-plus
 export REWARD_MODE=self-judge        # 默认: self-judge
 
 # 5. 启动训练
-bash rl/train/run_grpo_lora.sh
+bash rl/train/run_reinforce_lora.sh
 
 # 6. 运行 ablation (改 REWARD_MODE 即可)
-REWARD_MODE=baseline bash rl/train/run_grpo_lora.sh
-REWARD_MODE=rule bash rl/train/run_grpo_lora.sh
+REWARD_MODE=baseline bash rl/train/run_reinforce_lora.sh
+REWARD_MODE=rule bash rl/train/run_reinforce_lora.sh
 ```
 
 ---
@@ -376,7 +377,7 @@ REWARD_MODE=rule bash rl/train/run_grpo_lora.sh
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| Online vs Offline RL | Online | 离线数据只能用一轮，GRPO 需要 re-rollout |
+| Online vs Offline RL | Online | 离线数据只能用一轮，live-user 场景必须 online |
 | rollout.n | 1 | Live-user 场景，没有重试机会 |
 | Terminal reward | {-1, +1} | 自带方向信号，不需要 baseline |
 | Process reward | [-0.5, +0.3] | 量级够大，不被 terminal 淹没 |

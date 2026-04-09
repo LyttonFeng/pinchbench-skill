@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Online RL: GRPO + LoRA + OpenClaw Agent Loop
+# Online RL: REINFORCE + LoRA + OpenClaw Agent Loop
 #
-# Live-user 场景：每个 training step 从 8 个 task 采样 batch_size 个，
+# Live-user 场景 (rollout.n=1)：每个 training step 从 8 个 task 采样 batch_size 个，
 # 用当前 LoRA 策略跑 openclaw episode，拿 process + terminal reward，
-# 做一次 GRPO update (rollout.n=1 退化为 REINFORCE)。
+# 做一次 REINFORCE update。
 #
 # 三组 ablation 实验：
 #   REWARD_MODE=baseline    → Mode A: 纯 terminal reward
@@ -22,7 +22,7 @@
 #   export REWARD_MODE=oracle               # ablation mode
 #
 #   # Step 3: 启动训练
-#   bash rl/train/run_grpo_lora.sh
+#   bash rl/train/run_reinforce_lora.sh
 #
 # 依赖：pip install verl vllm transformers peft aiohttp
 
@@ -31,7 +31,7 @@ set -euo pipefail
 # ── 路径配置 ──
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DATA_DIR="${REPO_ROOT}/rl/data/prompts"
-OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/grpo_lora"
+OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/reinforce_lora"
 AGENT_LOOP_CONFIG="${REPO_ROOT}/rl/agent_loop/config.yaml"
 REWARD_MANAGER_PATH="${REPO_ROOT}/rl/train/reward_manager.py"
 
@@ -52,7 +52,7 @@ REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracl
 
 # ── 环境变量检查 ──
 echo "=============================="
-echo "  veRL Online RL (GRPO + LoRA)"
+echo "  veRL Online RL (REINFORCE + LoRA)"
 echo "  模型: ${MODEL}"
 echo "  LoRA rank: ${LORA_RANK}"
 echo "  GPU 数: ${N_GPUS}"
@@ -82,7 +82,7 @@ export PRM_API_KEY="${PRM_API_KEY:-dummy}"
 mkdir -p "${OUTPUT_DIR}"
 
 python3 -m verl.trainer.main_ppo \
-    algorithm.adv_estimator=grpo \
+    algorithm.adv_estimator=gpg \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${VAL_FILE}" \
     data.train_batch_size="${BATCH_SIZE}" \
@@ -128,7 +128,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger='["console"]' \
     trainer.project_name=pinchbench_rl \
-    trainer.experiment_name="grpo_lora_${REWARD_MODE}_$(date +%Y%m%d_%H%M)" \
+    trainer.experiment_name="reinforce_lora_${REWARD_MODE}_$(date +%Y%m%d_%H%M)" \
     trainer.n_gpus_per_node="${N_GPUS}" \
     trainer.nnodes=1 \
     trainer.save_freq=10 \

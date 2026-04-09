@@ -223,16 +223,6 @@ def results_to_samples(
     return samples
 
 
-def build_grpo_group(samples: list[TrainingSample]) -> GRPOGroup:
-    """把同一 task+seed 的多次采样打包成 GRPOGroup。"""
-    assert samples, "samples 不能为空"
-    task_id = samples[0].task_id
-    seed = samples[0].seed
-    prompt = samples[0].prompt
-    assert all(s.task_id == task_id and s.seed == seed for s in samples), \
-        "GRPOGroup 要求所有 sample 来自同一 task+seed"
-    return GRPOGroup(task_id=task_id, seed=seed, prompt=prompt, samples=samples)
-
 
 if __name__ == "__main__":
     import sys

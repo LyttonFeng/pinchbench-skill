@@ -16,7 +16,7 @@ Reward 量级：
   - rule:     通用行为规则 + terminal
   - oracle:   规则 + 天眼 reference trajectory + terminal
 
-使用方式（run_grpo_lora.sh 里）：
+使用方式（run_reinforce_lora.sh 里）：
   reward.reward_manager.path=rl/train/reward_manager.py
   reward.reward_manager.name=PinchBenchRewardManager
 """
