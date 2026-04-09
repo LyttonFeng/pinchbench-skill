@@ -48,8 +48,8 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 export ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 
 # ── 训练超参 ──
-BATCH_SIZE="${BATCH_SIZE:-8}"          # 8 个 task 各 1 条
-MICRO_BATCH="${MICRO_BATCH:-4}"        # L40S 48GB VRAM
+BATCH_SIZE="${BATCH_SIZE:-2}"          # ECS 4核8G，并发不能太高
+MICRO_BATCH="${MICRO_BATCH:-2}"        # L40S 48GB VRAM
 LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
@@ -104,7 +104,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.target_modules=all-linear \
     actor_rollout_ref.actor.optim.lr="${LR}" \
     actor_rollout_ref.actor.ppo_mini_batch_size="${BATCH_SIZE}" \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu="${MICRO_BATCH}" \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu="${BATCH_SIZE}" \
     actor_rollout_ref.actor.ppo_epochs=2 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.05 \
@@ -125,7 +125,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=30 \
     actor_rollout_ref.rollout.agent.default_agent_loop=openclaw_agent \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="${AGENT_LOOP_CONFIG}" \
-    actor_rollout_ref.rollout.agent.num_workers=2 \
+    actor_rollout_ref.rollout.agent.num_workers=1 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
@@ -140,5 +140,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=5 \
-    trainer.total_epochs=5 \
+    trainer.total_epochs=20 \
     trainer.default_local_dir="${OUTPUT_DIR}"
