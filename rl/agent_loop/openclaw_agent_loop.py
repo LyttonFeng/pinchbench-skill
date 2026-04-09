@@ -53,7 +53,7 @@ class OpenClawConfig:
     pinchbench_dir: str = ""
     reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
-    agent_timeout: float = 600.0
+    agent_timeout: float = 180.0
     max_turns: int = 30
     prm_vllm_base_url: str = "http://localhost:8000/v1"
     prm_model: str = "Qwen3-4B"
@@ -250,6 +250,17 @@ class OpenClawAgentLoop(AgentLoopBase):
         )
 
         response_length = self.rollout_config.response_length
+
+        # Ensure non-empty ids for veRL postprocessing (tokenizer.pad needs valid input)
+        if not all_prompt_ids:
+            eos_id = self.tokenizer.eos_token_id or 0
+            all_prompt_ids = [eos_id]
+        if not all_response_ids:
+            eos_id = self.tokenizer.eos_token_id or 0
+            all_response_ids = [eos_id]
+            all_response_mask = [0]
+            all_response_logprobs = [0.0]
+
         output = AgentLoopOutput(
             prompt_ids=all_prompt_ids,
             response_ids=all_response_ids[:response_length],
@@ -483,8 +494,14 @@ class OpenClawAgentLoop(AgentLoopBase):
             if task is None:
                 return False
             workspace = Path(self.oc_config.workspace_base) / task_id
-            result = grade_task(task=task, transcript=transcript, workspace=workspace)
-            score = result.get("total_score", 0.0)
+            execution_result = {
+                "transcript": transcript,
+                "workspace": str(workspace),
+                "status": "completed",
+            }
+            skill_dir = Path(self.oc_config.pinchbench_dir)
+            result = grade_task(task=task, execution_result=execution_result, skill_dir=skill_dir)
+            score = getattr(result, "score", 0.0)
             logger.info("Grading %s: score=%.2f", task_id, score)
             return score >= 0.5
         except Exception as e:
