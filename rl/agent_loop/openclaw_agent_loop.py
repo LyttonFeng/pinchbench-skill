@@ -278,10 +278,13 @@ class OpenClawAgentLoop(AgentLoopBase):
     ) -> asyncio.subprocess.Process:
         agent_id = f"rl-{task_id}-{session_id[:8]}"
         workspace = f"{self.oc_config.workspace_base}/{task_id}"
-        runpod_ip = self._get_public_ip()
-        remote_proxy_url = f"http://{runpod_ip}:{proxy_port}/v1"
 
-        setup_cmd = self._build_remote_setup(agent_id, remote_proxy_url, workspace, task_id)
+        # SSH reverse tunnel: ECS localhost:<proxy_port> -> RunPod localhost:<proxy_port>
+        # RunPod doesn't expose arbitrary ports to the public internet,
+        # so OpenClaw on ECS connects to its own localhost via the tunnel.
+        local_proxy_url = f"http://127.0.0.1:{proxy_port}/v1"
+
+        setup_cmd = self._build_remote_setup(agent_id, local_proxy_url, workspace, task_id)
         escaped_prompt = prompt.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
         run_cmd = (
             f"openclaw agent --agent {agent_id} --session-id {session_id} "
@@ -290,12 +293,17 @@ class OpenClawAgentLoop(AgentLoopBase):
 
         proc = await asyncio.create_subprocess_exec(
             "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+            "-o", "ExitOnForwardFailure=yes",
+            "-R", f"{proxy_port}:127.0.0.1:{proxy_port}",
             "-i", self.oc_config.ssh_key, "-p", str(self.oc_config.ssh_port),
             f"{self.oc_config.user}@{self.oc_config.host}",
             f"{setup_cmd} && cd {workspace} && {run_cmd}",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        logger.info("Started remote OpenClaw on %s pid=%s task=%s", self.oc_config.host, proc.pid, task_id)
+        logger.info(
+            "Started remote OpenClaw on %s pid=%s task=%s (reverse tunnel :%d)",
+            self.oc_config.host, proc.pid, task_id, proxy_port,
+        )
         return proc
 
     def _setup_agent_local(self, agent_id: str, proxy_url: str, workspace: Path) -> None:
@@ -492,6 +500,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         return tool_calls if tool_calls else None
 
     def _get_public_ip(self) -> str:
+        """Get public IP (kept for fallback/debugging)."""
         try:
             import urllib.request
             return urllib.request.urlopen("https://ifconfig.me", timeout=5).read().decode().strip()
