@@ -55,7 +55,7 @@ class OpenClawConfig:
     proxy_bind_host: str = "0.0.0.0"
     agent_timeout: float = 120.0
     max_turns: int = 5
-    prm_vllm_base_url: str = "http://localhost:8000/v1"
+    prm_vllm_base_url: str = "http://localhost:9090/v1"
     prm_model: str = "Qwen3-4B"
     prm_api_key: str = "dummy"
 
@@ -72,7 +72,7 @@ class OpenClawConfig:
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
             agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "120")),
             max_turns=int(os.environ.get("MAX_TURNS", "5")),
-            prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1"),
+            prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:9090/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen3-4B"),
             prm_api_key=os.environ.get("PRM_API_KEY", "dummy"),
         )
@@ -544,7 +544,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         if not self.oc_config.pinchbench_dir:
             return False
         try:
-            import sys
+            import sys, subprocess
             scripts_dir = Path(self.oc_config.pinchbench_dir) / "scripts"
             if str(scripts_dir) not in sys.path:
                 sys.path.insert(0, str(scripts_dir))
@@ -558,7 +558,26 @@ class OpenClawAgentLoop(AgentLoopBase):
             task = loader.load_task(task_file)
             if task is None:
                 return False
+
             workspace = Path(self.oc_config.workspace_base) / task_id
+            workspace.mkdir(parents=True, exist_ok=True)
+
+            # Sync workspace files from ECS (files are created there by OpenClaw)
+            if self.oc_config.host not in ("localhost", "127.0.0.1"):
+                ssh_key = self.oc_config.ssh_key or "/root/.ssh/id_ed25519"
+                remote_ws = f"{self.oc_config.workspace_base}/{task_id}/"
+                try:
+                    subprocess.run(
+                        ["rsync", "-az", "--timeout=10",
+                         "-e", f"ssh -o StrictHostKeyChecking=no -i {ssh_key}",
+                         f"{self.oc_config.user}@{self.oc_config.host}:{remote_ws}",
+                         str(workspace) + "/"],
+                        capture_output=True, timeout=30,
+                    )
+                    logger.info("Synced workspace from ECS for %s", task_id)
+                except Exception as e:
+                    logger.warning("rsync workspace failed for %s: %s", task_id, e)
+
             execution_result = {
                 "transcript": transcript,
                 "workspace": str(workspace),

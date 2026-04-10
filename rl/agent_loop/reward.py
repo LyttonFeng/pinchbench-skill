@@ -284,7 +284,7 @@ Respond with ONLY a JSON object, no other text:
 
 async def call_llm_judge(
     prompt: str,
-    vllm_base_url: str = "http://localhost:8000/v1",
+    vllm_base_url: str = "http://localhost:9090/v1",
     model: str = "Qwen3-4B",
     api_key: str = "dummy",
     timeout: float = 30.0,
@@ -340,7 +340,7 @@ async def call_llm_judge(
 
 def call_llm_judge_sync(
     prompt: str,
-    vllm_base_url: str = "http://localhost:8000/v1",
+    vllm_base_url: str = "http://localhost:9090/v1",
     model: str = "Qwen3-4B",
     api_key: str = "dummy",
     timeout: float = 30.0,
@@ -442,6 +442,41 @@ def _is_error_result(content: str) -> bool:
 #  Rule-based reward (Mode B fallback)
 # ══════════════════════════════════════════════════════════════
 
+def _parse_rubric_expected_tools(rubric: dict) -> list[str]:
+    """Extract expected tool types from reference_steps in order."""
+    tool_keywords = {
+        "web_search": ["web_search", "search"],
+        "web_fetch": ["web_fetch", "fetch"],
+        "read": ["read", "examine", "read each"],
+        "write": ["write", "create", "save"],
+        "edit": ["edit", "replace", "modify"],
+        "exec": ["exec", "run", "awk", "python", "pandas", "compute"],
+    }
+    steps = rubric.get("reference_steps", [])
+    ordered_tools = []
+    for step in steps:
+        step_lower = step.lower()
+        for tool_type, keywords in tool_keywords.items():
+            if any(kw in step_lower for kw in keywords):
+                ordered_tools.append(tool_type)
+                break
+    return ordered_tools
+
+
+def _match_tool_to_type(tool_name: str) -> str:
+    """Map actual OpenClaw tool names to our canonical types."""
+    name = tool_name.lower().replace("_", "")
+    mapping = {
+        "websearch": "web_search", "search": "web_search",
+        "webfetch": "web_fetch", "fetch": "web_fetch",
+        "read": "read", "fileread": "read", "cat": "read",
+        "write": "write", "filewrite": "write",
+        "edit": "edit", "fileedit": "edit", "streplace": "edit",
+        "exec": "exec", "bash": "exec", "shell": "exec",
+    }
+    return mapping.get(name, tool_name.lower())
+
+
 def generic_rule_reward(
     turn_index: int,
     turn: dict,
@@ -449,11 +484,12 @@ def generic_rule_reward(
     all_turns: list[dict],
     task_id: str,
 ) -> float:
-    """Mode B: rule-based process reward. Fast, no LLM call.
+    """Mode B: rubric-guided rule-based process reward. Fast, no LLM call.
 
-    Designed so that a model making valid tool calls gets positive reward,
-    even if the overall task fails (terminal_reward=-1). This ensures
-    non-zero gradient signal for learning tool usage.
+    Uses TASK_RUBRICS to give task-specific rewards:
+    - Checks if tool usage follows reference_steps order (天眼)
+    - Penalizes common_mistakes patterns from rubric
+    - Rewards progress toward the task goal
 
     Score range per turn: [-0.5, +0.3]
     """
@@ -462,11 +498,16 @@ def generic_rule_reward(
     tool_args = _get_tool_args(turn)
     reward = 0.0
 
-    # Reward for making a tool call (the key behavior we want to reinforce)
-    if tool_name:
-        reward += 0.15  # significant positive signal for using tools
+    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+    expected_tools = _parse_rubric_expected_tools(rubric)
 
-        # Extra reward for using well-formed arguments
+    # Count which assistant turn this is (0-indexed)
+    prev_assistant = [t for t in prev_turns if t.get("role") == "assistant"]
+    assistant_seq = len(prev_assistant)
+
+    if tool_name:
+        reward += 0.10
+
         if tool_args and len(str(tool_args)) > 5:
             reward += 0.05
 
@@ -476,22 +517,52 @@ def generic_rule_reward(
             if t.get("role") == "tool":
                 tr_content = t.get("content", "")
                 if tr_content.strip() and not _is_error_result(tr_content):
-                    reward += 0.10  # tool executed successfully
+                    reward += 0.10
                 elif _is_error_result(tr_content):
-                    reward -= 0.05  # tool errored, mild penalty
+                    reward -= 0.05
                 break
             elif t.get("role") == "assistant":
                 break
 
-        # Bonus for using appropriate tools
-        good_tools = {"read", "write", "edit", "exec", "web_search", "web_fetch",
-                       "bash", "file_read", "file_write", "shell"}
-        if tool_name.lower().replace("_", "") in {t.replace("_", "") for t in good_tools}:
-            reward += 0.05
+        # Rubric-guided: check if tool matches expected step (天眼 alignment)
+        cur_type = _match_tool_to_type(tool_name)
+        if assistant_seq < len(expected_tools):
+            expected = expected_tools[assistant_seq]
+            if cur_type == expected:
+                reward += 0.10  # following the reference path exactly
+                logger.debug("Rubric match: turn %d tool=%s matches expected=%s",
+                             assistant_seq, cur_type, expected)
+            elif cur_type in expected_tools:
+                reward += 0.03  # right tool but wrong order
+        elif cur_type in expected_tools:
+            reward += 0.05  # using a relevant tool type
 
-    # Penalty for empty responses without tool calls
-    if not content.strip() and not tool_name:
-        reward -= 0.20
+        # Rubric-guided: check for common mistakes
+        for mistake in rubric.get("common_mistakes", []):
+            mistake_lower = mistake.lower()
+            if "without reading" in mistake_lower or "without any web_search" in mistake_lower:
+                # Penalize writing/acting before reading/searching
+                if cur_type in ("write", "edit") and assistant_seq == 0:
+                    if "read" in expected_tools[:2] or "web_search" in expected_tools[:2]:
+                        reward -= 0.15
+                        logger.debug("Rubric penalty: acting before gathering info")
+            if "repeating" in mistake_lower and "same" in mistake_lower:
+                pass  # handled below in repetition check
+            if "fabricating" in mistake_lower or "without processing" in mistake_lower:
+                # Penalize write on first turn without prior info gathering
+                if cur_type == "write" and not any(
+                    _match_tool_to_type(_get_tool_name(t) or "") in ("read", "web_search", "exec")
+                    for t in prev_assistant if _get_tool_name(t)
+                ):
+                    reward -= 0.15
+                    logger.debug("Rubric penalty: writing without info gathering")
+
+    else:
+        if not content.strip():
+            reward -= 0.20
+        elif assistant_seq == 0:
+            # First turn with text-only (no tool call) is usually bad
+            reward -= 0.10
 
     # Penalty for refusal / hallucination patterns
     hallucination_patterns = [r"I don'?t have access to", r"As an AI", r"I'?m unable to"]
@@ -501,13 +572,12 @@ def generic_rule_reward(
             break
 
     # Penalty for repeating same action as previous turn
-    prev_assistant = [t for t in prev_turns if t.get("role") == "assistant"]
     if prev_assistant and tool_name:
         prev_tool = _get_tool_name(prev_assistant[-1])
         prev_args = str(_get_tool_args(prev_assistant[-1]))
         cur_args = str(tool_args)
         if prev_tool == tool_name and prev_args == cur_args:
-            reward -= 0.15  # repeating exact same action
+            reward -= 0.15
 
     return max(-0.5, min(0.3, reward))
 
@@ -522,7 +592,7 @@ async def compute_episode_rewards_async(
     task_id: str,
     task_prompt: str = "",
     mode: str = "self-judge",
-    vllm_base_url: str = "http://localhost:8000/v1",
+    vllm_base_url: str = "http://localhost:9090/v1",
     judge_model: str = "Qwen3-4B",
     judge_api_key: str = "dummy",
 ) -> list[float]:
@@ -567,7 +637,6 @@ async def compute_episode_rewards_async(
             r = generic_rule_reward(turn_idx, turn, prev_turns, trajectory, task_id)
 
         elif mode in ("self-judge", "oracle-judge"):
-            # Get tool result for this turn (if any)
             tool_result = None
             for t in trajectory[turn_idx + 1:]:
                 if t.get("role") == "tool":
@@ -587,14 +656,8 @@ async def compute_episode_rewards_async(
                 mode=mode,
             )
 
-            if mode == "oracle-judge":
-                # Use qwen-plus API for scoring
-                base_url = vllm_base_url  # will be overridden by caller
-                model = judge_model
-            else:
-                # Self-judge: use the same vLLM (Qwen3-4B)
-                base_url = vllm_base_url
-                model = judge_model
+            base_url = vllm_base_url
+            model = judge_model
 
             r = await call_llm_judge(
                 prm_prompt,
@@ -602,6 +665,17 @@ async def compute_episode_rewards_async(
                 model=model,
                 api_key=judge_api_key,
             )
+
+            # Fallback: if judge returned exactly 0.0 (likely failure),
+            # blend with rule-based reward to ensure signal
+            rule_r = generic_rule_reward(turn_idx, turn, prev_turns, trajectory, task_id)
+            if r == 0.0:
+                r = rule_r
+                logger.info("PRM judge returned 0.0, fallback to rule reward: %.2f", r)
+            else:
+                # Blend: 70% judge + 30% rule for stability
+                r = 0.7 * r + 0.3 * rule_r
+                logger.info("PRM judge=%.2f, rule=%.2f, blended=%.2f", r / 0.7, rule_r, r)
 
         else:
             r = 0.0
@@ -621,7 +695,7 @@ def compute_episode_rewards(
     task_id: str,
     mode: str = "self-judge",
     task_prompt: str = "",
-    vllm_base_url: str = "http://localhost:8000/v1",
+    vllm_base_url: str = "http://localhost:9090/v1",
     judge_model: str = "Qwen3-4B",
     judge_api_key: str = "dummy",
 ) -> list[float]:
