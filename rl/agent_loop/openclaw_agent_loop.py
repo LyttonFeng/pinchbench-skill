@@ -13,7 +13,8 @@ Architecture:
 Environment variables:
   OPENCLAW_HOST, OPENCLAW_USER, OPENCLAW_SSH_KEY, OPENCLAW_PORT,
   OPENCLAW_WORKSPACE, PINCHBENCH_DIR, REWARD_MODE,
-  PRM_VLLM_BASE_URL, PRM_MODEL, PRM_API_KEY
+  PRM_VLLM_BASE_URL, PRM_MODEL, PRM_API_KEY,
+  OPENCLAW_WEB_SEARCH_SKILLS, OPENCLAW_WEB_FETCH_SKILLS
 """
 
 from __future__ import annotations
@@ -41,6 +42,25 @@ if not logger.handlers:
     _h = logging.StreamHandler()
     _h.setLevel(logging.DEBUG)
     logger.addHandler(_h)
+
+DEFAULT_WEB_SEARCH_SKILLS = (
+    "web_search",
+    "search-web",
+    "web-search-free",
+    "ddg-web-search",
+    "dashscope-web-search",
+    "local-web-search-skill",
+    "websearch",
+)
+DEFAULT_WEB_FETCH_SKILLS = (
+    "web_fetch",
+    "web-fetch",
+    "web-fetch-markdown",
+    "clean-web-fetch",
+    "jina-web-fetcher",
+    "safe-smart-web-fetch",
+    "webfetch",
+)
 
 
 @dataclass
@@ -376,6 +396,8 @@ class OpenClawAgentLoop(AgentLoopBase):
         agent_id = f"rl-{task_id}-{session_id[:8]}"
         workspace = f"{self.oc_config.workspace_base}/{task_id}"
 
+        self._preflight_remote_skill_pool(task_id=task_id, task_prompt=prompt)
+
         # SSH reverse tunnel: ECS localhost:<proxy_port> -> RunPod localhost:<proxy_port>
         # RunPod doesn't expose arbitrary ports to the public internet,
         # so OpenClaw on ECS connects to its own localhost via the tunnel.
@@ -408,6 +430,154 @@ class OpenClawAgentLoop(AgentLoopBase):
             self.oc_config.host, proc.pid, task_id, proxy_port,
         )
         return proc
+
+    def _preflight_remote_skill_pool(self, *, task_id: str, task_prompt: str) -> None:
+        """Fail fast when a web-heavy task cannot see the expected skill pool."""
+        requirements = self._web_skill_requirements(task_id=task_id, task_prompt=task_prompt)
+        if not requirements:
+            return
+
+        remote_prefix = self._build_remote_activate_prefix()
+        remote_cmd = "openclaw skills list --eligible --json"
+        if remote_prefix:
+            remote_cmd = f"{remote_prefix} && {remote_cmd}"
+
+        logger.info(
+            "Preflighting ECS OpenClaw skills for task=%s (search=%s fetch=%s)",
+            task_id,
+            requirements["require_search"],
+            requirements["require_fetch"],
+        )
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ConnectTimeout=10",
+                "-i", self.oc_config.ssh_key,
+                "-p", str(self.oc_config.ssh_port),
+                f"{self.oc_config.user}@{self.oc_config.host}",
+                remote_cmd,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "ECS OpenClaw skill preflight failed "
+                f"(exit={result.returncode}): {result.stderr.strip() or result.stdout.strip()}"
+            )
+
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"ECS OpenClaw skill preflight returned non-JSON output: {exc}"
+            ) from exc
+
+        ready_skills = {
+            item.get("name")
+            for item in payload.get("skills", [])
+            if isinstance(item, dict) and item.get("eligible") and not item.get("disabled")
+        }
+        web_search_aliases = self._skill_aliases(
+            "OPENCLAW_WEB_SEARCH_SKILLS",
+            DEFAULT_WEB_SEARCH_SKILLS,
+        )
+        web_fetch_aliases = self._skill_aliases(
+            "OPENCLAW_WEB_FETCH_SKILLS",
+            DEFAULT_WEB_FETCH_SKILLS,
+        )
+
+        search_match = self._first_matching_alias(ready_skills, web_search_aliases)
+        fetch_match = self._first_matching_alias(ready_skills, web_fetch_aliases)
+
+        logger.info(
+            "ECS OpenClaw skill pool: ready=%s, web_search=%s, web_fetch=%s",
+            sorted(ready_skills),
+            search_match or "missing",
+            fetch_match or "missing",
+        )
+
+        missing_required: list[str] = []
+        if requirements["require_search"] and not search_match:
+            missing_required.append(
+                "web_search (acceptable names: " + ", ".join(web_search_aliases) + ")"
+            )
+        if requirements["require_fetch"] and not fetch_match:
+            missing_required.append(
+                "web_fetch (acceptable names: " + ", ".join(web_fetch_aliases) + ")"
+            )
+        if missing_required:
+            raise RuntimeError(
+                "ECS OpenClaw skill pool mismatch for "
+                f"{task_id}: missing required capability(s): {', '.join(missing_required)}. "
+                f"Ready skills: {', '.join(sorted(ready_skills)) or '<none>'}. "
+                "If you intentionally renamed the skills, remap them with "
+                "OPENCLAW_WEB_SEARCH_SKILLS / OPENCLAW_WEB_FETCH_SKILLS."
+            )
+
+        if requirements["recommend_fetch"] and not fetch_match:
+            logger.warning(
+                "Task %s prefers a web_fetch-style skill, but none is ready. "
+                "This is not fatal, but it may weaken the trajectory relative to the GT reference.",
+                task_id,
+            )
+
+    def _web_skill_requirements(self, *, task_id: str, task_prompt: str) -> Optional[dict[str, bool]]:
+        text = f"{task_id}\n{task_prompt}".lower()
+
+        stock_task = (
+            "stock price" in text and "apple" in text
+        ) or "stock_report.txt" in text
+        if stock_task:
+            return {
+                "require_search": True,
+                "require_fetch": True,
+                "recommend_fetch": True,
+            }
+
+        market_research_task = (
+            "observability and apm" in text
+            or "application performance monitoring" in text
+            or "competitive landscape analysis" in text
+            or "market research" in text
+        )
+        if market_research_task:
+            return {
+                "require_search": True,
+                "require_fetch": False,
+                "recommend_fetch": True,
+            }
+
+        polymarket_task = (
+            "polymarket" in text
+            or "prediction markets" in text
+            or "trending market" in text
+            or "polymarket_briefing" in text
+        )
+        if polymarket_task:
+            return {
+                "require_search": True,
+                "require_fetch": False,
+                "recommend_fetch": True,
+            }
+
+        return None
+
+    def _skill_aliases(self, env_name: str, defaults: tuple[str, ...]) -> list[str]:
+        raw = os.environ.get(env_name, "").strip()
+        if raw:
+            aliases = [item.strip() for item in raw.split(",") if item.strip()]
+            if aliases:
+                return aliases
+        return list(defaults)
+
+    @staticmethod
+    def _first_matching_alias(ready_skills: set[str], aliases: list[str]) -> Optional[str]:
+        for alias in aliases:
+            if alias in ready_skills:
+                return alias
+        return None
 
     def _setup_agent_local(self, agent_id: str, proxy_url: str, workspace: Path) -> None:
         workspace.mkdir(parents=True, exist_ok=True)
