@@ -23,6 +23,64 @@ logger = logging.getLogger(__name__)
 USE_SHELL = platform.system() == "Windows"
 
 
+def _patch_openclaw_agent_disable_model_fallbacks(agent_id: str, model_id: str) -> None:
+    """OpenClaw merges global `agents.defaults.model` fallbacks when the agent's model is a plain string.
+
+    On fallback to a second provider, `resolveFallbackRetryPrompt` replaces the real user message with
+    \"Continue where you left off...\" (see openclaw dist/agent-command attempt-execution), which
+    breaks PinchBench. Forcing `fallbacks: []` on this agent disables that chain.
+    """
+    path = Path.home() / ".openclaw" / "openclaw.json"
+    if not path.is_file():
+        logger.warning("Cannot patch OpenClaw config (missing %s); model fallbacks may still apply.", path)
+        return
+    try:
+        raw = path.read_text("utf-8-sig")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Cannot read OpenClaw config %s: %s", path, exc)
+        return
+    agents = data.get("agents")
+    if not isinstance(agents, dict):
+        return
+    lst = agents.get("list")
+    if not isinstance(lst, list):
+        return
+    normalized = agent_id.replace(":", "-").lower()
+    updated = False
+    for entry in lst:
+        if not isinstance(entry, dict):
+            continue
+        eid = entry.get("id")
+        if not isinstance(eid, str):
+            continue
+        if eid != agent_id and eid.lower() != normalized:
+            continue
+        entry["model"] = {"primary": model_id, "fallbacks": []}
+        updated = True
+        break
+    if not updated:
+        logger.warning(
+            "Bench agent %s not found in openclaw.json agents.list; could not disable model fallbacks.",
+            agent_id,
+        )
+        return
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", "utf-8")
+        os.replace(tmp, path)
+        logger.info(
+            "Patched OpenClaw config: agent %s model fallbacks disabled (PinchBench).",
+            agent_id,
+        )
+    except OSError as exc:
+        logger.warning("Failed to write OpenClaw config %s: %s", path, exc)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 class ModelValidationError(Exception):
     """Raised when a model ID is invalid or inaccessible."""
 
@@ -372,6 +430,8 @@ def ensure_agent_exists(
             logger.info("Deleted stale sessions.json for bench agent %s", agent_id)
         except OSError as exc:
             logger.warning("Failed to delete sessions.json: %s", exc)
+
+    _patch_openclaw_agent_disable_model_fallbacks(agent_id, model_id)
 
     return True
 
