@@ -118,6 +118,8 @@ fi
 # 设置环境变量供 agent loop 和 reward manager 使用
 export PINCHBENCH_DIR="${REPO_ROOT}"
 export REWARD_MODE="${REWARD_MODE}"
+# Lower the terminal reward weight so intermediate process signals matter more.
+export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.3}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
 export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
 # Keep judge model name aligned with the served base model path to avoid

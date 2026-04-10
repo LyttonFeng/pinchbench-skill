@@ -44,7 +44,11 @@ def compute_score(
     reward_mode = extra_info.get("reward_mode", os.environ.get("REWARD_MODE", "baseline"))
     task_prompt = extra_info.get("task_prompt", "")
 
-    terminal_reward = 1.0 if terminal_success else -1.0
+    terminal_reward_raw = 1.0 if terminal_success else -1.0
+    terminal_reward_weight = float(
+        os.environ.get("PINCHBENCH_TERMINAL_REWARD_WEIGHT", "0.3")
+    )
+    terminal_reward = terminal_reward_weight * terminal_reward_raw
 
     if reward_mode == "baseline" or not trajectory:
         return {

@@ -175,6 +175,10 @@ _GENERIC_RUBRIC = {
     ],
 }
 
+TERMINAL_REWARD_WEIGHT = float(
+    os.environ.get("PINCHBENCH_TERMINAL_REWARD_WEIGHT", "0.3")
+)
+
 
 def _resolve_model_id(candidates: list[str], desired_model: str) -> str:
     """Pick the best served model ID for a requested judge model name.
@@ -712,7 +716,8 @@ async def compute_episode_rewards_async(
     Returns:
         List of rewards, one per assistant turn. Terminal reward added to last.
     """
-    terminal_reward = 1.0 if terminal_success else -1.0
+    terminal_reward_raw = 1.0 if terminal_success else -1.0
+    terminal_reward = TERMINAL_REWARD_WEIGHT * terminal_reward_raw
 
     assistant_indices = [
         i for i, t in enumerate(trajectory) if t.get("role") == "assistant"
@@ -805,7 +810,8 @@ def compute_episode_rewards(
 
     For modes requiring LLM calls, uses sync HTTP.
     """
-    terminal_reward = 1.0 if terminal_success else -1.0
+    terminal_reward_raw = 1.0 if terminal_success else -1.0
+    terminal_reward = TERMINAL_REWARD_WEIGHT * terminal_reward_raw
 
     assistant_indices = [
         i for i, t in enumerate(trajectory) if t.get("role") == "assistant"
