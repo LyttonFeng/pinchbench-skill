@@ -66,6 +66,18 @@ DEFAULT_WEB_FETCH_SKILLS = (
 )
 
 
+def _resolve_pinchbench_dir() -> str:
+    """Repo root with ``tasks/`` and ``assets/`` (for ECS workspace seeding)."""
+    pb = os.environ.get("PINCHBENCH_DIR", "").strip()
+    if pb:
+        return pb
+    here = Path(__file__).resolve()
+    inferred = here.parents[2]  # rl/agent_loop/this.py -> repo root
+    if (inferred / "tasks").is_dir() and (inferred / "assets").is_dir():
+        return str(inferred)
+    return ""
+
+
 @dataclass
 class OpenClawConfig:
     host: str = "localhost"
@@ -87,13 +99,16 @@ class OpenClawConfig:
 
     @classmethod
     def from_env(cls) -> "OpenClawConfig":
+        pb = _resolve_pinchbench_dir()
+        if pb and not os.environ.get("PINCHBENCH_DIR", "").strip():
+            logger.warning("PINCHBENCH_DIR unset; using inferred repo root %s", pb)
         return cls(
             host=os.environ.get("OPENCLAW_HOST", "localhost"),
             user=os.environ.get("OPENCLAW_USER", "root"),
             ssh_key=os.environ.get("OPENCLAW_SSH_KEY", str(Path.home() / ".ssh" / "id_ed25519")),
             ssh_port=int(os.environ.get("OPENCLAW_PORT", "22")),
             workspace_base=os.environ.get("OPENCLAW_WORKSPACE", "/tmp/pinchbench"),
-            pinchbench_dir=os.environ.get("PINCHBENCH_DIR", ""),
+            pinchbench_dir=pb,
             reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
             agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "240")),
@@ -116,11 +131,22 @@ class OpenClawAgentLoop(AgentLoopBase):
         else:
             self.oc_config = OpenClawConfig.from_env()
 
+    def _ensure_pinchbench_dir(self) -> None:
+        """Ray / Hydra may leave pinchbench_dir empty; seeding needs tasks + assets paths."""
+        if self.oc_config.pinchbench_dir.strip():
+            return
+        pb = _resolve_pinchbench_dir()
+        if pb:
+            self.oc_config.pinchbench_dir = pb
+            os.environ.setdefault("PINCHBENCH_DIR", pb)
+            logger.warning("pinchbench_dir was empty; set to %s for workspace seeding", pb)
+
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
         """Run one PinchBench episode.
 
         kwargs contains dataset fields: raw_prompt, extra_info, etc.
         """
+        self._ensure_pinchbench_dir()
         from .model_proxy import ModelProxy, ModelRequest
         from .trajectory import TrajectoryReconstructor, TurnRecord
 
@@ -678,11 +704,16 @@ class OpenClawAgentLoop(AgentLoopBase):
             scripts_dir = Path(self.oc_config.pinchbench_dir) / "scripts"
             if str(scripts_dir) not in sys.path:
                 sys.path.insert(0, str(scripts_dir))
-            from lib_tasks import TaskLoader
+            from lib_tasks import TaskLoader, resolve_task_markdown_path
             tasks_dir = Path(self.oc_config.pinchbench_dir) / "tasks"
             loader = TaskLoader(tasks_dir)
-            task_file = tasks_dir / f"{task_id}.md"
+            task_file = resolve_task_markdown_path(tasks_dir, task_id)
             if not task_file.exists():
+                logger.error(
+                    "Task markdown not found for %s (expected %s); cannot seed workspace_files",
+                    task_id,
+                    task_file,
+                )
                 return
             task = loader.load_task(task_file)
             if task is None:
@@ -815,11 +846,11 @@ class OpenClawAgentLoop(AgentLoopBase):
             scripts_dir = Path(self.oc_config.pinchbench_dir) / "scripts"
             if str(scripts_dir) not in sys.path:
                 sys.path.insert(0, str(scripts_dir))
-            from lib_tasks import TaskLoader
+            from lib_tasks import TaskLoader, resolve_task_markdown_path
             from lib_grading import grade_task
             tasks_dir = Path(self.oc_config.pinchbench_dir) / "tasks"
             loader = TaskLoader(tasks_dir)
-            task_file = tasks_dir / f"{task_id}.md"
+            task_file = resolve_task_markdown_path(tasks_dir, task_id)
             if not task_file.exists():
                 return False
             task = loader.load_task(task_file)
@@ -853,7 +884,6 @@ class OpenClawAgentLoop(AgentLoopBase):
             skill_dir = Path(self.oc_config.pinchbench_dir)
             from lib_grading import resolve_judge_backend_from_env, preflight_judge_connection
             judge_cfg = resolve_judge_backend_from_env(
-                default_model="qwen-plus",
                 default_backend="api",
                 default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             )

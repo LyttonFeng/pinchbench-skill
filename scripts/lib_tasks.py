@@ -15,6 +15,17 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# Canonical PinchBench frontmatter `id` -> on-disk markdown filename when they differ.
+TASK_MARKDOWN_FILENAME_BY_ID: Dict[str, str] = {
+    "task_18_spreadsheet_summary": "task_19_spreadsheet_summary.md",
+}
+
+
+def resolve_task_markdown_path(tasks_dir: Path, task_id: str) -> Path:
+    """Return path to task markdown. ``id`` in YAML may differ from the ``task_*.md`` stem."""
+    filename = TASK_MARKDOWN_FILENAME_BY_ID.get(task_id, f"{task_id}.md")
+    return tasks_dir / filename
+
 
 class Task:
     """Represents a single benchmark task."""

@@ -21,6 +21,11 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+_REPO_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
+if str(_REPO_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_REPO_SCRIPTS))
+from lib_tasks import resolve_task_markdown_path  # noqa: E402
+
 
 # The 8 selected RL training tasks (ids match PinchBench frontmatter `id:` in each task_*.md)
 DEFAULT_TASK_IDS = [
@@ -33,17 +38,6 @@ DEFAULT_TASK_IDS = [
     "task_22_second_brain",
     "task_24_polymarket_briefing",
 ]
-
-# On-disk filename may differ from frontmatter id (e.g. task_19_spreadsheet_summary.md declares id task_18_*).
-TASK_MD_FILE: dict[str, str] = {
-    "task_18_spreadsheet_summary": "task_19_spreadsheet_summary.md",
-}
-
-
-def _task_markdown_path(tasks_dir: Path, task_id: str) -> Path:
-    """Resolve path to task markdown; task_id is the PinchBench canonical id (YAML `id:`)."""
-    filename = TASK_MD_FILE.get(task_id, f"{task_id}.md")
-    return tasks_dir / filename
 
 
 def parse_task_file(task_path: Path) -> dict:
@@ -136,7 +130,7 @@ def main() -> None:
 
     tasks = []
     for task_id in args.task_ids:
-        task_path = _task_markdown_path(tasks_dir, task_id)
+        task_path = resolve_task_markdown_path(tasks_dir, task_id)
         if not task_path.exists():
             print(f"Warning: task file not found: {task_path}")
             continue

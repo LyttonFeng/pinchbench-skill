@@ -4,6 +4,19 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+
+def _ensure_pinchbench_dir_env() -> None:
+    """Ray workers sometimes miss shell exports; infer repo root so ECS workspace seeding finds tasks/assets."""
+    if os.environ.get("PINCHBENCH_DIR", "").strip():
+        return
+    root = Path(__file__).resolve().parent
+    if (root / "tasks").is_dir() and (root / "assets").is_dir():
+        os.environ["PINCHBENCH_DIR"] = str(root)
+
+
+_ensure_pinchbench_dir_env()
 
 def _maybe_patch_verl_best_ckpt() -> None:
     v = os.environ.get("PINCHBENCH_BEST_CKPT", "").strip().lower()
