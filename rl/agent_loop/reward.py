@@ -35,14 +35,15 @@ if not logger.handlers:
 
 TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_02_stock": {
-        "goal": "Research Apple (AAPL) stock price, save to stock_report.txt with price, date, and market summary.",
+        "goal": "Research Apple (AAPL) stock price, save to stock_report.txt including the literal ticker AAPL, price, date, and market summary (PinchBench automated grading requires the substring AAPL in the file).",
         "reference_steps": [
             "1. web_search: search for AAPL/Apple stock price",
             "2. web_fetch or additional web_search: get detailed data (may retry different sources)",
-            "3. write: create stock_report.txt with price ($xxx.xx), date, and market summary",
+            "3. write: create stock_report.txt with price ($xxx.xx), date, market summary, and the ticker symbol AAPL as text",
             "4. Summarize and confirm completion",
         ],
         "common_mistakes": [
+            "Writing only 'Apple' or company name without the literal token AAPL (automated grader checks \\bAAPL\\b)",
             "Searching but never writing the file (premature termination)",
             "Writing the file without any web_search first (fabricating data)",
             "Repeating the same failed search query without changing it",
@@ -96,22 +97,27 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "qwen_plus_stats": "7 turns, 4 tool calls.",
     },
     "task_16_email_triage": {
-        "goal": "Read all emails, analyze priority, and write classification/triage results.",
+        "goal": "Read all 13 files in inbox/ (email_01.txt … email_13.txt), then write triage_report.md: top summary + day plan; for each email assign Priority P0–P4, Category (incident/client/internal-request/administrative/code-review/automated/newsletter/spam), and recommended action; sort entries by priority (most urgent first). PinchBench checks: production outage email as P0; monitoring alert tied to same incident; BigClient email P0/P1; promotional/spam email P4; report structure and summary section.",
         "reference_steps": [
-            "1. read/exec: list email directory contents",
-            "2. read: read each email individually (multiple read calls)",
-            "3. Analyze: discuss priority and categorization",
-            "4. write: write classification results covering all emails",
+            "1. read/exec: discover inbox/ and enumerate email_01 … email_13",
+            "2. read: open each email file (one or more read calls per email until all 13 understood)",
+            "3. Plan: assign P0–P4 and category per grading rules (incident vs client vs spam, etc.)",
+            "4. write: triage_report.md with summary block first, then sections sorted by priority, each row with priority/category/action",
         ],
         "common_mistakes": [
-            "Reading only some emails before writing conclusions",
-            "Not covering all emails in the triage output",
-            "Skipping the analysis step and going straight to writing",
+            "Writing triage_report.md before reading all 13 emails or omitting any email from the report",
+            "Missing file triage_report.md or wrong filename",
+            "Production database outage / CTO war-room email not labeled P0",
+            "API latency monitoring alert (email 13) not linked or grouped with the DB outage incident",
+            "BigClient / $2M contract email not P0 or P1",
+            "Promotional flash-sale / spam-like email not P4 or lowest tier",
+            "Report not sorted by priority (most urgent first) or no executive summary + day plan at the top",
+            "Missing per-email recommended action or category keywords the grader expects",
         ],
-        "qwen_plus_stats": "15 turns, 14 tool calls. Read every email individually.",
+        "qwen_plus_stats": "15 turns, 14 tool calls; read each inbox file; triage_report.md with summary then priority-sorted entries.",
     },
-    "task_19_spreadsheet_summary": {
-        "goal": "Analyze CSV/XLSX data and write a summary report with actual computed values.",
+    "task_18_spreadsheet_summary": {
+        "goal": "Analyze CSV/XLSX data and write data_summary.md with actual computed values (matches tasks/task_19_spreadsheet_summary.md, id=task_18_spreadsheet_summary).",
         "reference_steps": [
             "1. read: read CSV file to understand data structure",
             "2. read: attempt to read XLSX (will get binary)",
@@ -175,6 +181,20 @@ _GENERIC_RUBRIC = {
         "Empty response without any tool call",
     ],
 }
+
+# PinchBench frontmatter `id` is task_18_spreadsheet_summary; older code/logs used task_19_*.
+_TASK_ID_ALIASES: dict[str, str] = {
+    "task_19_spreadsheet_summary": "task_18_spreadsheet_summary",
+}
+
+
+def _canonical_task_id_for_rubric(task_id: str) -> str:
+    return _TASK_ID_ALIASES.get(task_id, task_id)
+
+
+def _get_task_rubric(task_id: str) -> dict[str, Any]:
+    return TASK_RUBRICS.get(_canonical_task_id_for_rubric(task_id), _GENERIC_RUBRIC)
+
 
 TERMINAL_REWARD_WEIGHT = float(
     os.environ.get("PINCHBENCH_TERMINAL_REWARD_WEIGHT", "0.3")
@@ -288,7 +308,7 @@ def build_prm_prompt(
       - The agent's previous actions (context)
       - The current turn to evaluate
     """
-    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+    rubric = _get_task_rubric(task_id)
 
     # Format current turn info
     tool_name = _get_tool_name(current_turn) or "(no tool call)"
@@ -592,7 +612,7 @@ def generic_rule_reward(
 ) -> float:
     """Mode B: rubric-guided rule-based process reward. Fast, no LLM call.
 
-    Uses TASK_RUBRICS to give task-specific rewards:
+    Uses _get_task_rubric (TASK_RUBRICS + id aliases) for task-specific rewards:
     - Checks if tool usage follows reference_steps order (天眼)
     - Penalizes common_mistakes patterns from rubric
     - Rewards progress toward the task goal
@@ -604,7 +624,7 @@ def generic_rule_reward(
     tool_args = _get_tool_args(turn)
     reward = 0.0
 
-    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+    rubric = _get_task_rubric(task_id)
     expected_tools = _parse_rubric_expected_tools(rubric)
 
     # Count which assistant turn this is (0-indexed)
@@ -728,7 +748,7 @@ async def compute_episode_rewards_async(
         return [terminal_reward]
 
     # Get expected number of turns from rubric
-    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+    rubric = _get_task_rubric(task_id)
     expected_turns = len(rubric.get("reference_steps", [4]))
     judge_model = await _resolve_judge_model_async(vllm_base_url, judge_model)
 
@@ -821,7 +841,7 @@ def compute_episode_rewards(
     if not assistant_indices:
         return [terminal_reward]
 
-    rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
+    rubric = _get_task_rubric(task_id)
     expected_turns = len(rubric.get("reference_steps", [4]))
     judge_model = _resolve_judge_model_sync(vllm_base_url, judge_model)
 

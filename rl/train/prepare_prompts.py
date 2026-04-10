@@ -22,17 +22,28 @@ import pandas as pd
 import yaml
 
 
-# The 8 selected RL training tasks
+# The 8 selected RL training tasks (ids match PinchBench frontmatter `id:` in each task_*.md)
 DEFAULT_TASK_IDS = [
     "task_02_stock",
     "task_10_workflow",
     "task_12_skill_search",
     "task_16_email_triage",
     "task_18_market_research",
-    "task_19_spreadsheet_summary",
+    "task_18_spreadsheet_summary",
     "task_22_second_brain",
     "task_24_polymarket_briefing",
 ]
+
+# On-disk filename may differ from frontmatter id (e.g. task_19_spreadsheet_summary.md declares id task_18_*).
+TASK_MD_FILE: dict[str, str] = {
+    "task_18_spreadsheet_summary": "task_19_spreadsheet_summary.md",
+}
+
+
+def _task_markdown_path(tasks_dir: Path, task_id: str) -> Path:
+    """Resolve path to task markdown; task_id is the PinchBench canonical id (YAML `id:`)."""
+    filename = TASK_MD_FILE.get(task_id, f"{task_id}.md")
+    return tasks_dir / filename
 
 
 def parse_task_file(task_path: Path) -> dict:
@@ -125,13 +136,14 @@ def main() -> None:
 
     tasks = []
     for task_id in args.task_ids:
-        task_path = tasks_dir / f"{task_id}.md"
+        task_path = _task_markdown_path(tasks_dir, task_id)
         if not task_path.exists():
             print(f"Warning: task file not found: {task_path}")
             continue
         task = parse_task_file(task_path)
         tasks.append(task)
-        print(f"  Loaded {task_id}: {task['name']} ({task['category']})")
+        canon = task.get("task_id", task_id)
+        print(f"  Loaded {task_id} -> {canon}: {task['name']} ({task['category']}) [{task_path.name}]")
 
     if not tasks:
         print("No valid tasks found")

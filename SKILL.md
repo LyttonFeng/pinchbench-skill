@@ -59,7 +59,7 @@ uv run benchmark.py --model anthropic/claude-sonnet-4 --no-upload
 | `task_16_email_triage` | Email | Inbox triage |
 | `task_17_email_search` | Email | Email search |
 | `task_18_market_research` | Research | Market analysis |
-| `task_19_spreadsheet_summary` | Analysis | Spreadsheet analysis |
+| `task_18_spreadsheet_summary` | Analysis | Spreadsheet analysis (file `tasks/task_19_spreadsheet_summary.md`) |
 | `task_20_eli5_pdf_summary` | Analysis | PDF simplification |
 | `task_21_openclaw_comprehension` | Knowledge | OpenClaw docs comprehension |
 | `task_22_second_brain` | Memory | Knowledge management |
