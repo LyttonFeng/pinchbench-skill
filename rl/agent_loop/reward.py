@@ -305,16 +305,16 @@ async def call_llm_judge(
 
     full_prompt = (
         "<|im_start|>system\nYou are a strict scoring function. "
-        "Respond with ONLY a JSON object.<|im_end|>\n"
+        "Respond with ONLY a JSON object. No thinking, no explanation.<|im_end|>\n"
         f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        "<|im_start|>assistant\n"
+        "<|im_start|>assistant\n<think>\n\n</think>\n"
     )
 
     payload = {
         "model": model,
         "prompt": full_prompt,
         "temperature": 0.1,
-        "max_tokens": 128,
+        "max_tokens": 64,
         "stop": ["<|im_end|>"],
     }
 
@@ -362,16 +362,16 @@ def call_llm_judge_sync(
 
     full_prompt = (
         "<|im_start|>system\nYou are a strict scoring function. "
-        "Respond with ONLY a JSON object.<|im_end|>\n"
+        "Respond with ONLY a JSON object. No thinking, no explanation.<|im_end|>\n"
         f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        "<|im_start|>assistant\n"
+        "<|im_start|>assistant\n<think>\n\n</think>\n"
     )
 
     payload = json.dumps({
         "model": model,
         "prompt": full_prompt,
         "temperature": 0.1,
-        "max_tokens": 128,
+        "max_tokens": 64,
         "stop": ["<|im_end|>"],
     }).encode("utf-8")
 
