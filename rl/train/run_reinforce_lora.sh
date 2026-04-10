@@ -309,7 +309,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.9 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.30 \
-    actor_rollout_ref.rollout.max_model_len=24576 \
+    actor_rollout_ref.rollout.max_model_len=19456 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
