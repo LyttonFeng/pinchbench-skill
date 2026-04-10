@@ -56,7 +56,7 @@ class OpenClawConfig:
     agent_timeout: float = 120.0
     max_turns: int = 5
     prm_vllm_base_url: str = "http://localhost:9090/v1"
-    prm_model: str = "Qwen3-4B"
+    prm_model: str = "Qwen/Qwen3-4B"
     prm_api_key: str = "dummy"
 
     @classmethod
@@ -73,7 +73,7 @@ class OpenClawConfig:
             agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "120")),
             max_turns=int(os.environ.get("MAX_TURNS", "5")),
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:9090/v1"),
-            prm_model=os.environ.get("PRM_MODEL", "Qwen3-4B"),
+            prm_model=os.environ.get("PRM_MODEL", "Qwen/Qwen3-4B"),
             prm_api_key=os.environ.get("PRM_API_KEY", "dummy"),
         )
 

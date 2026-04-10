@@ -296,30 +296,39 @@ async def call_llm_judge(
 ) -> float:
     """Call LLM (Qwen3-4B via vLLM) to score a single turn.
 
+    Uses /v1/completions (text completion) because veRL's vLLMHttpServer
+    does not expose /v1/chat/completions.
+
     Returns score in [-0.5, +0.3]. Falls back to 0.0 on any error.
     """
     import aiohttp
 
+    full_prompt = (
+        "<|im_start|>system\nYou are a strict scoring function. "
+        "Respond with ONLY a JSON object.<|im_end|>\n"
+        f"<|im_start|>user\n{prompt}<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
+
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a strict scoring function. Respond with ONLY a JSON object."},
-            {"role": "user", "content": prompt},
-        ],
+        "prompt": full_prompt,
         "temperature": 0.1,
         "max_tokens": 128,
+        "stop": ["<|im_end|>"],
     }
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{vllm_base_url}/chat/completions",
+                f"{vllm_base_url}/completions",
                 json=payload,
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("PRM judge HTTP %d", resp.status)
+                    body = await resp.text()
+                    logger.warning("PRM judge HTTP %d: %s", resp.status, body[:200])
                     return 0.0
                 data = await resp.json()
     except Exception as e:
@@ -327,16 +336,14 @@ async def call_llm_judge(
         return 0.0
 
     try:
-        text = data["choices"][0]["message"]["content"].strip()
-        # Strip markdown fences if present
+        text = data["choices"][0]["text"].strip()
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-        # Strip <think>...</think> blocks
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         result = json.loads(text)
         score = float(result.get("score", 0.0))
         reason = result.get("reason", "")
-        logger.debug("PRM judge: score=%.2f reason=%s", score, reason)
+        print(f"[PRM] Judge scored: {score:.2f}, reason: {reason}")
         return max(-0.5, min(0.3, score))
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
         logger.warning("PRM judge parse failed: %s, raw: %s", e, text[:200] if 'text' in dir() else "N/A")
@@ -350,21 +357,26 @@ def call_llm_judge_sync(
     api_key: str = "dummy",
     timeout: float = 30.0,
 ) -> float:
-    """Synchronous wrapper for call_llm_judge."""
-    from urllib import request as urllib_request, error as urllib_error
+    """Synchronous wrapper for call_llm_judge (uses /v1/completions)."""
+    from urllib import request as urllib_request
+
+    full_prompt = (
+        "<|im_start|>system\nYou are a strict scoring function. "
+        "Respond with ONLY a JSON object.<|im_end|>\n"
+        f"<|im_start|>user\n{prompt}<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
 
     payload = json.dumps({
         "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a strict scoring function. Respond with ONLY a JSON object."},
-            {"role": "user", "content": prompt},
-        ],
+        "prompt": full_prompt,
         "temperature": 0.1,
         "max_tokens": 128,
+        "stop": ["<|im_end|>"],
     }).encode("utf-8")
 
     req = urllib_request.Request(
-        f"{vllm_base_url}/chat/completions",
+        f"{vllm_base_url}/completions",
         data=payload,
         headers={
             "Content-Type": "application/json",
@@ -381,7 +393,7 @@ def call_llm_judge_sync(
         return 0.0
 
     try:
-        text = data["choices"][0]["message"]["content"].strip()
+        text = data["choices"][0]["text"].strip()
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
