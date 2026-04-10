@@ -98,6 +98,7 @@ echo "  GPU 数: ${N_GPUS}"
 echo "  Batch size: ${BATCH_SIZE}"
 echo "  Reward mode: ${REWARD_MODE}"
 echo "  OpenClaw host: ${OPENCLAW_HOST:-localhost}"
+echo "  OpenClaw remote activate: ${OPENCLAW_REMOTE_ACTIVATE_CMD:-<none>}"
 echo "  Judge model: ${JUDGE_MODEL:-qwen-plus}"
 echo "  Grading judge: ${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus} @ ${PINCHBENCH_GRADE_JUDGE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
 echo "  数据: ${DATA_DIR}"
@@ -119,6 +120,9 @@ fi
 # 设置环境变量供 agent loop 和 reward manager 使用
 export PINCHBENCH_DIR="${REPO_ROOT}"
 export REWARD_MODE="${REWARD_MODE}"
+# ECS OpenClaw is expected to be directly on PATH after installer setup.
+# Leave this empty unless a site-specific activation command is required.
+export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
 # Lower the terminal reward weight so intermediate process signals matter more.
 export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.3}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
@@ -134,6 +138,44 @@ export PINCHBENCH_GRADE_JUDGE_BASE_URL="${PINCHBENCH_GRADE_JUDGE_BASE_URL:-https
 export PINCHBENCH_GRADE_JUDGE_API_KEY="${PINCHBENCH_GRADE_JUDGE_API_KEY:-${DASHSCOPE_API_KEY:-${JUDGE_API_KEY:-}}}"
 
 python3 -c "import os, sys; from pathlib import Path; sys.path.insert(0, str(Path('${REPO_ROOT}') / 'scripts')); from lib_grading import preflight_judge_connection; preflight_judge_connection(judge_model=os.environ.get('PINCHBENCH_GRADE_JUDGE_MODEL', 'qwen-plus'), judge_backend=os.environ.get('PINCHBENCH_GRADE_JUDGE_BACKEND', 'api'), judge_base_url=os.environ.get('PINCHBENCH_GRADE_JUDGE_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'), judge_api_key=os.environ.get('PINCHBENCH_GRADE_JUDGE_API_KEY', ''))"
+
+python3 - <<'PY'
+import os
+import subprocess
+
+host = os.environ.get("OPENCLAW_HOST", "localhost")
+user = os.environ.get("OPENCLAW_USER", "root")
+port = os.environ.get("OPENCLAW_PORT", "22")
+ssh_key = os.environ.get("OPENCLAW_SSH_KEY", "/root/.ssh/id_ed25519")
+activate_cmd = os.environ.get(
+    "OPENCLAW_REMOTE_ACTIVATE_CMD",
+    "",
+)
+remote_cmd = "command -v openclaw >/dev/null && openclaw --version"
+if activate_cmd.strip():
+    remote_cmd = f"{activate_cmd.strip()} && {remote_cmd}"
+
+print(f"Preflighting ECS OpenClaw: {user}@{host}:{port}")
+result = subprocess.run(
+    [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=10",
+        "-i", ssh_key,
+        "-p", str(port),
+        f"{user}@{host}",
+        remote_cmd,
+    ],
+    capture_output=True,
+    text=True,
+)
+if result.returncode != 0:
+    print(result.stdout, end="")
+    print(result.stderr, end="")
+    raise SystemExit(f"ECS OpenClaw preflight failed with exit code {result.returncode}")
+print(result.stdout.strip())
+print("ECS OpenClaw preflight succeeded")
+PY
 
 mkdir -p "${OUTPUT_DIR}" "${TENSORBOARD_DIR}"
 # TensorBoard：veRL 读 TENSORBOARD_DIR（verl/utils/tracking.py）；须 pip install tensorboard

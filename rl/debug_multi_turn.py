@@ -193,14 +193,18 @@ async def main():
     b64_models = base64.b64encode(models_json.encode()).decode()
     b64_auth = base64.b64encode(auth_json.encode()).decode()
 
-    setup_cmd = " && ".join([
-        f"mkdir -p {workspace}",
+    activate_cmd = os.environ.get("OPENCLAW_REMOTE_ACTIVATE_CMD", "").strip()
+    setup_parts = [f"mkdir -p {workspace}"]
+    if activate_cmd:
+        setup_parts.append(activate_cmd)
+    setup_parts.extend([
         f"openclaw agents add {agent_id} --model verl/verl-proxy --workspace {workspace} --non-interactive 2>/dev/null || true",
         f"mkdir -p {agent_dir}",
         f"echo {b64_models} | base64 -d > {agent_dir}/models.json",
         f"echo {b64_auth} | base64 -d > {agent_dir}/auth-profiles.json",
         f"rm -f $HOME/.openclaw/agents/{agent_id}/sessions/sessions.json",
     ])
+    setup_cmd = " && ".join(setup_parts)
 
     escaped_prompt = task_prompt.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
     run_cmd = (

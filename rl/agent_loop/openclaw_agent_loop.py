@@ -58,6 +58,7 @@ class OpenClawConfig:
     prm_vllm_base_url: str = "http://localhost:9090/v1"
     prm_model: str = "Qwen/Qwen3-4B"
     prm_api_key: str = "dummy"
+    remote_activate_cmd: str = ""
 
     @classmethod
     def from_env(cls) -> "OpenClawConfig":
@@ -75,6 +76,7 @@ class OpenClawConfig:
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:9090/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen/Qwen3-4B"),
             prm_api_key=os.environ.get("PRM_API_KEY", "dummy"),
+            remote_activate_cmd=os.environ.get("OPENCLAW_REMOTE_ACTIVATE_CMD", ""),
         )
 
 
@@ -385,6 +387,12 @@ class OpenClawAgentLoop(AgentLoopBase):
             f"openclaw agent --agent {agent_id} --session-id {session_id} "
             f'--message "{escaped_prompt}" --local'
         )
+        remote_prefix = self._build_remote_activate_prefix()
+        remote_command = " && ".join(filter(None, [
+            remote_prefix,
+            setup_cmd,
+            f"cd {workspace} && {run_cmd}",
+        ]))
 
         proc = await asyncio.create_subprocess_exec(
             "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
@@ -392,7 +400,7 @@ class OpenClawAgentLoop(AgentLoopBase):
             "-R", f"{proxy_port}:127.0.0.1:{proxy_port}",
             "-i", self.oc_config.ssh_key, "-p", str(self.oc_config.ssh_port),
             f"{self.oc_config.user}@{self.oc_config.host}",
-            f"{setup_cmd} && cd {workspace} && {run_cmd}",
+            remote_command,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         logger.info(
@@ -466,6 +474,20 @@ class OpenClawAgentLoop(AgentLoopBase):
             f"echo {b64_auth} | base64 -d > {agent_dir}/auth-profiles.json",
             f"rm -f $HOME/.openclaw/agents/{agent_id}/sessions/sessions.json",
         ])
+
+    def _build_remote_activate_prefix(self) -> str:
+        """Build an optional shell prefix for ECS-side OpenClaw activation.
+
+        The default is empty because the ECS install is expected to expose the
+        `openclaw` CLI directly on PATH. If a site-specific activation command is
+        required, pass it via OPENCLAW_REMOTE_ACTIVATE_CMD.
+        """
+        if self.oc_config.remote_activate_cmd.strip():
+            return self.oc_config.remote_activate_cmd.strip()
+        remote_bin_dir = os.environ.get("OPENCLAW_REMOTE_BIN_DIR", "").strip()
+        if remote_bin_dir:
+            return f'export PATH="{remote_bin_dir}:$PATH"'
+        return ""
 
     def _prepare_workspace(self, task_id: str, workspace: Path) -> None:
         if not self.oc_config.pinchbench_dir:

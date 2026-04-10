@@ -98,14 +98,18 @@ async def run_task(task_id: str, max_turns: int = 15):
     task_prompt = task_text[prompt_start + len("## Prompt"):prompt_end].strip()
     logger.info("Task prompt: %s...", task_prompt[:100])
 
-    setup_cmd = " && ".join([
-        f"mkdir -p {ws}",
+    activate_cmd = os.environ.get("OPENCLAW_REMOTE_ACTIVATE_CMD", "").strip()
+    setup_parts = [f"mkdir -p {ws}"]
+    if activate_cmd:
+        setup_parts.append(activate_cmd)
+    setup_parts.extend([
         f"openclaw agents add {agent_id} --model verl/verl-proxy --workspace {ws} --non-interactive 2>/dev/null || true",
         f"mkdir -p {ad}",
         f"echo {b64m} | base64 -d > {ad}/models.json",
         f"echo {b64a} | base64 -d > {ad}/auth-profiles.json",
         f"rm -f $HOME/.openclaw/agents/{agent_id}/sessions/sessions.json",
     ])
+    setup_cmd = " && ".join(setup_parts)
 
     escaped_prompt = task_prompt.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
     run_cmd = (

@@ -21,6 +21,7 @@ export OPENCLAW_HOST="8.163.82.224"
 export OPENCLAW_USER="root"
 export OPENCLAW_SSH_KEY="/root/.ssh/id_ed25519"
 export OPENCLAW_PORT="22"
+export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
 export PINCHBENCH_DIR="${REPO_DIR}"
 export REWARD_MODE="self-judge"
 export PRM_VLLM_BASE_URL="http://localhost:9090/v1"
@@ -89,6 +90,7 @@ tmux new-session -d -s "${TMUX_SESSION}" bash -c "
     export OPENCLAW_USER='${OPENCLAW_USER}'
     export OPENCLAW_SSH_KEY='${OPENCLAW_SSH_KEY}'
     export OPENCLAW_PORT='${OPENCLAW_PORT}'
+    export OPENCLAW_REMOTE_ACTIVATE_CMD='${OPENCLAW_REMOTE_ACTIVATE_CMD}'
     export PINCHBENCH_DIR='${REPO_DIR}'
     export REWARD_MODE='${REWARD_MODE}'
     export PRM_VLLM_BASE_URL='${PRM_VLLM_BASE_URL}'
