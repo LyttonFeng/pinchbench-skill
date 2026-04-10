@@ -18,6 +18,19 @@ pip install -q \
     accelerate \
     datasets
 
+# flash-attn: 必须使用预编译 wheel，禁止源码编译
+PY_VER=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+if [[ "$PY_VER" == "cp312" ]]; then
+    pip install -q --break-system-packages \
+        "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp312/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+elif [[ "$PY_VER" == "cp311" ]]; then
+    pip install -q --break-system-packages \
+        "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp311/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
+else
+    echo "Unsupported Python version for flash-attn wheel: ${PY_VER}"
+    exit 1
+fi
+
 # veRL
 # Pin the version that provides verl.experimental.agent_loop.AgentLoopBase,
 # which OpenClawAgentLoop imports.
@@ -30,6 +43,10 @@ python -c "import torch; print('CUDA:', torch.cuda.is_available(), '| 设备:', 
 echo ""
 echo "验证 vLLM..."
 python -c "import vllm; print('vLLM 版本:', vllm.__version__)"
+
+echo ""
+echo "验证 flash-attn..."
+python -c "import flash_attn; print('flash-attn 版本:', flash_attn.__version__)"
 
 echo ""
 echo "验证 veRL agent loop..."
