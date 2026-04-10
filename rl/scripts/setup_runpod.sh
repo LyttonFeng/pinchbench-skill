@@ -10,8 +10,8 @@ echo "=============================="
 echo "  RunPod 环境初始化"
 echo "=============================="
 
-# 基础依赖
-pip install -q \
+# 基础依赖（Ubuntu PEP 668 需 --break-system-packages，与 flash/verl 一致）
+pip install -q --break-system-packages \
     vllm \
     transformers \
     peft \
