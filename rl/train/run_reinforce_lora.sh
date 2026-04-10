@@ -56,6 +56,9 @@ LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
 REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracle-judge
+# vLLM rollout：OOM 时先降 VLLM_GPU_MEM_UTIL（如 0.22）或 VLLM_MAX_MODEL_LEN（如 16384）
+export VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.28}"
+export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-18432}"
 
 # Checkpoint 磁盘（RunPod /workspace 常不大；满盘会导致 torch.save zip 报错）
 # 每次保存会写一个目录: ${OUTPUT_DIR}/global_step_{N}/
@@ -109,6 +112,7 @@ if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
   echo "  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
 fi
 echo "  tensorboard: ${TENSORBOARD_DIR}  (需: pip install tensorboard)"
+echo "  vLLM: gpu_memory_utilization=${VLLM_GPU_MEM_UTIL} max_model_len=${VLLM_MAX_MODEL_LEN}"
 echo "=============================="
 
 # 检查 prompt 数据
@@ -124,6 +128,8 @@ export REWARD_MODE="${REWARD_MODE}"
 # ECS OpenClaw is expected to be directly on PATH after installer setup.
 # Do not inject a remote activation command unless a site-specific setup requires it.
 export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
+# Give OpenClaw more time to respond before treating turn 0 as a dead session.
+export AGENT_TIMEOUT="${AGENT_TIMEOUT:-240}"
 # Lower the terminal reward weight so intermediate process signals matter more.
 export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.3}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
@@ -137,6 +143,16 @@ export PINCHBENCH_GRADE_JUDGE_MODEL="${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus}"
 export PINCHBENCH_GRADE_JUDGE_BACKEND="${PINCHBENCH_GRADE_JUDGE_BACKEND:-api}"
 export PINCHBENCH_GRADE_JUDGE_BASE_URL="${PINCHBENCH_GRADE_JUDGE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
 export PINCHBENCH_GRADE_JUDGE_API_KEY="${PINCHBENCH_GRADE_JUDGE_API_KEY:-${DASHSCOPE_API_KEY:-${JUDGE_API_KEY:-}}}"
+
+# RunPod 常见坑：未 export OPENCLAW_HOST → 默认 localhost，SSH 预检连到本机而非 ECS，训练必歪或失败。
+# 本地-only 调试：PINCHBENCH_ALLOW_LOCAL_OPENCLAW=1
+_oc_host="${OPENCLAW_HOST:-localhost}"
+if { [ "${_oc_host}" = "localhost" ] || [ "${_oc_host}" = "127.0.0.1" ]; } && [ "${PINCHBENCH_ALLOW_LOCAL_OPENCLAW:-0}" != "1" ]; then
+    echo "ERROR: OPENCLAW_HOST 为 ${_oc_host}。在 RunPod 上请指向 ECS，例如:"
+    echo "  export OPENCLAW_HOST=8.163.82.224"
+    echo "若确要本机 OpenClaw 调试: PINCHBENCH_ALLOW_LOCAL_OPENCLAW=1 bash rl/train/run_reinforce_lora.sh"
+    exit 1
+fi
 
 python3 -c "import os, sys; from pathlib import Path; sys.path.insert(0, str(Path('${REPO_ROOT}') / 'scripts')); from lib_grading import preflight_judge_connection; preflight_judge_connection(judge_model=os.environ.get('PINCHBENCH_GRADE_JUDGE_MODEL', 'qwen-plus'), judge_backend=os.environ.get('PINCHBENCH_GRADE_JUDGE_BACKEND', 'api'), judge_base_url=os.environ.get('PINCHBENCH_GRADE_JUDGE_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'), judge_api_key=os.environ.get('PINCHBENCH_GRADE_JUDGE_API_KEY', ''))"
 
@@ -309,8 +325,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.9 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.30 \
-    actor_rollout_ref.rollout.max_model_len=19456 \
+    actor_rollout_ref.rollout.gpu_memory_utilization="${VLLM_GPU_MEM_UTIL}" \
+    actor_rollout_ref.rollout.max_model_len="${VLLM_MAX_MODEL_LEN}" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
