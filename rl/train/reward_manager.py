@@ -72,8 +72,10 @@ def compute_score(
             judge_api_key=judge_api_key,
         )
 
-        total_process = sum(per_turn_rewards)
-        total_reward = total_process + terminal_reward
+        # compute_episode_rewards already adds terminal_reward to the last turn,
+        # so the episode score is just the sum of per-turn rewards.
+        total_reward = sum(per_turn_rewards)
+        total_process = total_reward - terminal_reward
 
         return {
             "score": total_reward,

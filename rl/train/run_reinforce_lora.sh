@@ -120,7 +120,9 @@ export PINCHBENCH_DIR="${REPO_ROOT}"
 export REWARD_MODE="${REWARD_MODE}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
 export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
-export PRM_MODEL="${PRM_MODEL:-Qwen3-4B}"
+# Keep judge model name aligned with the served base model path to avoid
+# vLLM 404s like "The model `Qwen3-4B` does not exist."
+export PRM_MODEL="${PRM_MODEL:-${MODEL}}"
 export PRM_API_KEY="${PRM_API_KEY:-dummy}"
 
 mkdir -p "${OUTPUT_DIR}" "${TENSORBOARD_DIR}"

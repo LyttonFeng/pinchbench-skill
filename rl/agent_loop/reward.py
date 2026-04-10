@@ -176,6 +176,90 @@ _GENERIC_RUBRIC = {
 }
 
 
+def _resolve_model_id(candidates: list[str], desired_model: str) -> str:
+    """Pick the best served model ID for a requested judge model name.
+
+    We accept exact matches first, then basename matches so that
+    `Qwen3-4B` can resolve to `Qwen/Qwen3-4B`.
+    """
+    if not candidates:
+        return desired_model
+
+    if desired_model in candidates:
+        return desired_model
+
+    desired_base = desired_model.split("/")[-1]
+    basename_matches = [
+        model_id for model_id in candidates if model_id.split("/")[-1] == desired_base
+    ]
+    if basename_matches:
+        return basename_matches[0]
+
+    partial_matches = [
+        model_id for model_id in candidates
+        if desired_model in model_id or model_id in desired_model
+    ]
+    if partial_matches:
+        return partial_matches[0]
+
+    return candidates[0]
+
+
+async def _resolve_judge_model_async(vllm_base_url: str, desired_model: str) -> str:
+    """Resolve the actual model name exposed by the current vLLM server."""
+    import aiohttp
+
+    endpoint = f"{vllm_base_url.rstrip('/')}/models"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                endpoint,
+                headers={"Authorization": "Bearer dummy"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning("Judge model lookup failed %s -> HTTP %s", endpoint, resp.status)
+                    return desired_model
+                payload = await resp.json()
+    except Exception as exc:
+        logger.warning("Judge model lookup failed %s: %s", endpoint, exc)
+        return desired_model
+
+    served_models = [
+        item.get("id")
+        for item in payload.get("data", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    resolved = _resolve_model_id(served_models, desired_model)
+    if resolved != desired_model:
+        logger.info("Resolved judge model %s -> %s from %s", desired_model, resolved, endpoint)
+    return resolved
+
+
+def _resolve_judge_model_sync(vllm_base_url: str, desired_model: str) -> str:
+    """Sync version used by the fallback judge path."""
+    from urllib import request as urllib_request
+
+    endpoint = f"{vllm_base_url.rstrip('/')}/models"
+    try:
+        req = urllib_request.Request(endpoint, method="GET")
+        with urllib_request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.warning("Judge model lookup failed %s: %s", endpoint, exc)
+        return desired_model
+
+    served_models = [
+        item.get("id")
+        for item in payload.get("data", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    resolved = _resolve_model_id(served_models, desired_model)
+    if resolved != desired_model:
+        logger.info("Resolved judge model %s -> %s from %s", desired_model, resolved, endpoint)
+    return resolved
+
+
 # ══════════════════════════════════════════════════════════════
 #  PRM Prompt Construction
 # ══════════════════════════════════════════════════════════════
@@ -640,6 +724,7 @@ async def compute_episode_rewards_async(
     # Get expected number of turns from rubric
     rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
     expected_turns = len(rubric.get("reference_steps", [4]))
+    judge_model = await _resolve_judge_model_async(vllm_base_url, judge_model)
 
     rewards = []
 
@@ -731,6 +816,7 @@ def compute_episode_rewards(
 
     rubric = TASK_RUBRICS.get(task_id, _GENERIC_RUBRIC)
     expected_turns = len(rubric.get("reference_steps", [4]))
+    judge_model = _resolve_judge_model_sync(vllm_base_url, judge_model)
 
     rewards = []
 
