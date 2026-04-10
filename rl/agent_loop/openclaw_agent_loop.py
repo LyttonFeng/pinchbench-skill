@@ -23,7 +23,9 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import subprocess
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -405,6 +407,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         workspace = f"{self.oc_config.workspace_base}/{task_id}"
 
         self._preflight_remote_skill_pool(task_id=task_id, task_prompt=prompt)
+        self._prepare_remote_workspace(task_id, workspace)
 
         # SSH reverse tunnel: ECS localhost:<proxy_port> -> RunPod localhost:<proxy_port>
         # RunPod doesn't expose arbitrary ports to the public internet,
@@ -699,6 +702,70 @@ class OpenClawAgentLoop(AgentLoopBase):
                     dest.write_bytes(src.read_bytes())
         except Exception as e:
             logger.error("Workspace prep failed: %s", e)
+
+    def _prepare_remote_workspace(self, task_id: str, workspace: str) -> None:
+        """Write task `workspace_files` onto ECS before OpenClaw runs.
+
+        Local mode calls `_prepare_workspace` on the training host; remote mode
+        only had `mkdir -p` on ECS, so inbox assets from task YAML were missing
+        (e.g. email_13.txt for task_16_email_triage). Seed a temp tree locally and
+        rsync it to the remote workspace.
+        """
+        if not self.oc_config.pinchbench_dir:
+            return
+        try:
+            with tempfile.TemporaryDirectory(prefix="pinchbench_seed_") as td:
+                local_root = Path(td) / task_id
+                self._prepare_workspace(task_id, local_root)
+                if not local_root.is_dir():
+                    return
+                has_files = any(p.is_file() for p in local_root.rglob("*"))
+                if not has_files:
+                    logger.debug("Remote workspace seed skipped (no files) for %s", task_id)
+                    return
+                ws = shlex.quote(workspace)
+                reset = subprocess.run(
+                    [
+                        "ssh",
+                        "-o", "StrictHostKeyChecking=no",
+                        "-o", "ConnectTimeout=10",
+                        "-i", self.oc_config.ssh_key,
+                        "-p", str(self.oc_config.ssh_port),
+                        f"{self.oc_config.user}@{self.oc_config.host}",
+                        f"rm -rf {ws} && mkdir -p {ws}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if reset.returncode != 0:
+                    logger.error(
+                        "Remote workspace reset failed for %s: %s %s",
+                        task_id, reset.stderr, reset.stdout,
+                    )
+                    return
+                rsync_cmd = [
+                    "rsync",
+                    "-az",
+                    "--timeout=60",
+                    "-e",
+                    (
+                        f"ssh -o StrictHostKeyChecking=no "
+                        f"-i {self.oc_config.ssh_key} -p {self.oc_config.ssh_port}"
+                    ),
+                    f"{local_root}/",
+                    f"{self.oc_config.user}@{self.oc_config.host}:{workspace}/",
+                ]
+                sync = subprocess.run(rsync_cmd, capture_output=True, text=True, timeout=120)
+                if sync.returncode != 0:
+                    logger.error(
+                        "Remote workspace rsync failed for %s: %s %s",
+                        task_id, sync.stderr, sync.stdout,
+                    )
+                else:
+                    logger.info("Seeded remote workspace for %s -> %s", task_id, workspace)
+        except Exception as e:
+            logger.error("Remote workspace prep failed for %s: %s", task_id, e)
 
     # ── Transcript / Grading ──
 
