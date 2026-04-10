@@ -51,8 +51,9 @@
 #  9. 磁盘满 → checkpoint 保存失败
 #     → PyTorch 报错: unexpected pos ... inline_container.cc（实为写盘失败）
 #     → df -h /workspace；HF_HOME、docker 层、旧 global_step_* 都会占空间
-#     → run_reinforce_lora.sh 已默认: save_freq=20, max_actor_ckpt_to_keep=1
-#     → 推理只需 actor/lora_adapter/，可手动删掉更老的 global_step_* 目录
+#     → 在 Pod 里清旧 ckpt: cd /workspace/pinchbench-skill && DRY_RUN=1 bash rl/scripts/prune_old_ckpts.sh
+#       再 bash rl/scripts/prune_old_ckpts.sh（有 best_ckpt_state.json 则只留最佳步）
+#     → run_reinforce_lora.sh: 默认 PINCHBENCH_BEST_CKPT=1 会按 val 只留最佳；否则可调 save_freq / max_actor_ckpt
 #
 #  ECS 信息 (阿里云 4核8G):
 #    IP:   8.163.82.224

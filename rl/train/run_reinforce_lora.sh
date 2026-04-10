@@ -62,9 +62,27 @@ REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracl
 #   - actor/lora_adapter/  仅 LoRA（adapter_model.safetensors，几十 MB，推理主要用这个）
 #   - data.pt         dataloader 状态（很小）
 #   - latest_checkpointed_iteration.txt 在 OUTPUT_DIR 根目录
-SAVE_FREQ="${SAVE_FREQ:-20}"                      # 每多少 global step 存一次（加大可省空间）
-MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # 只保留最近 N 个 global_step_*（1=最省盘）
+#
+# PINCHBENCH_BEST_CKPT=1（默认）: 通过 repo 根目录 sitecustomize + rl/verl_best_ckpt_patch 在每次 val 后
+# 按 val-core/*/reward/mean@* 只保留历史最佳 global_step_*；此时应让 save_freq 与 test_freq 一致，
+# 否则 val 步上没有新 checkpoint，剪枝不会跑、旧目录会堆在盘上。
+PINCHBENCH_BEST_CKPT="${PINCHBENCH_BEST_CKPT:-1}"
+export PINCHBENCH_BEST_CKPT
+TEST_FREQ="${TEST_FREQ:-5}"
+MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # BEST_CKPT=0 时：只保留最近 N 个 global_step_*
 MAX_CRITIC_CKPT_TO_KEEP="${MAX_CRITIC_CKPT_TO_KEEP:-1}"  # 无 critic 时无影响
+
+if [ "${PINCHBENCH_BEST_CKPT}" = "1" ]; then
+  SAVE_FREQ="${SAVE_FREQ:-${TEST_FREQ}}"
+  HYDRA_MAX_ACTOR_KEEP='trainer.max_actor_ckpt_to_keep=null'
+else
+  SAVE_FREQ="${SAVE_FREQ:-20}"
+  HYDRA_MAX_ACTOR_KEEP="trainer.max_actor_ckpt_to_keep=${MAX_ACTOR_CKPT_TO_KEEP}"
+fi
+
+if [ "${PINCHBENCH_BEST_CKPT}" = "1" ] && [ "${SAVE_FREQ}" != "${TEST_FREQ}" ]; then
+  echo "WARN: PINCHBENCH_BEST_CKPT=1 建议 SAVE_FREQ==TEST_FREQ（当前 save_freq=${SAVE_FREQ} test_freq=${TEST_FREQ}），否则部分 val 步无新 checkpoint、无法按 val 清理旧目录。"
+fi
 
 # ── 环境变量检查 ──
 echo "=============================="
@@ -78,7 +96,10 @@ echo "  OpenClaw host: ${OPENCLAW_HOST:-localhost}"
 echo "  Judge model: ${JUDGE_MODEL:-qwen-plus}"
 echo "  数据: ${DATA_DIR}"
 echo "  输出: ${OUTPUT_DIR}"
-echo "  save_freq: ${SAVE_FREQ}  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
+echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  save_freq: ${SAVE_FREQ}  test_freq: ${TEST_FREQ}"
+if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
+  echo "  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
+fi
 echo "=============================="
 
 # 检查 prompt 数据
@@ -155,8 +176,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node="${N_GPUS}" \
     trainer.nnodes=1 \
     trainer.save_freq="${SAVE_FREQ}" \
-    trainer.max_actor_ckpt_to_keep="${MAX_ACTOR_CKPT_TO_KEEP}" \
+    ${HYDRA_MAX_ACTOR_KEEP} \
     trainer.max_critic_ckpt_to_keep="${MAX_CRITIC_CKPT_TO_KEEP}" \
-    trainer.test_freq=5 \
+    trainer.test_freq="${TEST_FREQ}" \
     trainer.total_epochs=20 \
     trainer.default_local_dir="${OUTPUT_DIR}"
