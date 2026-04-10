@@ -40,7 +40,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
 from lib_agent import ensure_agent_exists, execute_openclaw_task, cleanup_agent_sessions
-from lib_grading import grade_task
+from lib_grading import grade_task, preflight_judge_connection
 from lib_tasks import TaskLoader, Task
 from convert import transcript_to_sample
 from schema import split_for_seed
@@ -336,6 +336,14 @@ def main() -> None:
         "开始采样：%d 个 task × %d 次 = %d 条 trajectory",
         len(tasks), args.runs, total,
     )
+
+    if args.judge_model:
+        preflight_judge_connection(
+            judge_model=args.judge_model,
+            judge_backend="api",
+            judge_base_url=args.judge_base_url,
+            judge_api_key=args.judge_api_key,
+        )
 
     # 多次采样循环：每个 task 跑 --runs 次，seed 自动递增
     success = 0

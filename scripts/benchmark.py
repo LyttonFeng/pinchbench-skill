@@ -32,7 +32,12 @@ from lib_agent import (
     slugify_model,
     validate_openrouter_model,
 )
-from lib_grading import GradeResult, grade_task
+from lib_grading import (
+    GradeResult,
+    grade_task,
+    preflight_judge_connection,
+    resolve_judge_backend_from_env,
+)
 from lib_tasks import Task, TaskLoader
 
 
@@ -611,6 +616,22 @@ def main():
         except ModelValidationError as exc:
             logger.error("❌ %s", exc)
             sys.exit(1)
+
+    judge_cfg = resolve_judge_backend_from_env()
+    if args.judge:
+        judge_cfg["judge_model"] = args.judge
+        judge_cfg["judge_backend"] = "api"
+        if args.base_url:
+            judge_cfg["judge_base_url"] = args.base_url
+        if args.api_key:
+            judge_cfg["judge_api_key"] = args.api_key
+    if judge_cfg["judge_backend"] == "api":
+        preflight_judge_connection(
+            judge_model=str(judge_cfg["judge_model"]),
+            judge_backend=str(judge_cfg["judge_backend"]),
+            judge_base_url=judge_cfg["judge_base_url"],
+            judge_api_key=judge_cfg["judge_api_key"],
+        )
 
     ensure_agent_exists(
         agent_id, args.model, agent_workspace,

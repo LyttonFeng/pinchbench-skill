@@ -133,6 +133,8 @@ export PINCHBENCH_GRADE_JUDGE_BACKEND="${PINCHBENCH_GRADE_JUDGE_BACKEND:-api}"
 export PINCHBENCH_GRADE_JUDGE_BASE_URL="${PINCHBENCH_GRADE_JUDGE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
 export PINCHBENCH_GRADE_JUDGE_API_KEY="${PINCHBENCH_GRADE_JUDGE_API_KEY:-${DASHSCOPE_API_KEY:-${JUDGE_API_KEY:-}}}"
 
+python3 -c "import os, sys; from pathlib import Path; sys.path.insert(0, str(Path('${REPO_ROOT}') / 'scripts')); from lib_grading import preflight_judge_connection; preflight_judge_connection(judge_model=os.environ.get('PINCHBENCH_GRADE_JUDGE_MODEL', 'qwen-plus'), judge_backend=os.environ.get('PINCHBENCH_GRADE_JUDGE_BACKEND', 'api'), judge_base_url=os.environ.get('PINCHBENCH_GRADE_JUDGE_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1'), judge_api_key=os.environ.get('PINCHBENCH_GRADE_JUDGE_API_KEY', ''))"
+
 mkdir -p "${OUTPUT_DIR}" "${TENSORBOARD_DIR}"
 # TensorBoard：veRL 读 TENSORBOARD_DIR（verl/utils/tracking.py）；须 pip install tensorboard
 

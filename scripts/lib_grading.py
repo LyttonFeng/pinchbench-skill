@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +99,73 @@ def grade_task(
         )
         return _combine_grades(task, auto_result, llm_result)
     raise ValueError(f"Unknown grading type: {grading_type}")
+
+
+def preflight_judge_connection(
+    *,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
+    judge_backend: str = "openclaw",
+    judge_base_url: Optional[str] = None,
+    judge_api_key: Optional[str] = None,
+    timeout_seconds: float = 30.0,
+) -> None:
+    """Fail fast if the configured LLM judge endpoint cannot be reached."""
+    if judge_backend != "api":
+        logger.info("Skipping judge preflight for backend=%s", judge_backend)
+        return
+    if not judge_base_url:
+        raise ValueError("judge_base_url is required for api judge preflight")
+    if not judge_api_key:
+        raise ValueError("judge_api_key is required for api judge preflight")
+
+    probe_prompt = (
+        "Reply with only a JSON object: {\"ok\": true}. "
+        "Do not include any extra text."
+    )
+    logger.info(
+        "Preflighting judge connection: backend=%s model=%s base_url=%s",
+        judge_backend,
+        judge_model,
+        judge_base_url,
+    )
+    result = call_judge_api(
+        prompt=probe_prompt,
+        model=judge_model,
+        timeout_seconds=timeout_seconds,
+        base_url=judge_base_url,
+        api_key=judge_api_key,
+    )
+    if result.get("status") != "success":
+        raise RuntimeError(
+            f"Judge preflight failed: {result.get('error', result.get('status'))}"
+        )
+    text = str(result.get("text", "")).strip()
+    if not text:
+        raise RuntimeError("Judge preflight failed: empty response text")
+    logger.info("Judge preflight succeeded: model=%s response=%s", judge_model, text[:120])
+
+
+def resolve_judge_backend_from_env(
+    *,
+    default_model: str = DEFAULT_JUDGE_MODEL,
+    default_backend: str = "openclaw",
+    default_base_url: Optional[str] = None,
+    default_api_key: Optional[str] = None,
+) -> Dict[str, Optional[str]]:
+    """Resolve judge settings from env vars used by training/benchmark entrypoints."""
+    model = os.environ.get("PINCHBENCH_GRADE_JUDGE_MODEL", default_model)
+    backend = os.environ.get("PINCHBENCH_GRADE_JUDGE_BACKEND", default_backend)
+    base_url = os.environ.get("PINCHBENCH_GRADE_JUDGE_BASE_URL", default_base_url)
+    api_key = os.environ.get(
+        "PINCHBENCH_GRADE_JUDGE_API_KEY",
+        os.environ.get("JUDGE_API_KEY", os.environ.get("DASHSCOPE_API_KEY", default_api_key)),
+    )
+    return {
+        "judge_model": model,
+        "judge_backend": backend,
+        "judge_base_url": base_url,
+        "judge_api_key": api_key,
+    }
 
 
 def _grade_automated(task: Task, execution_result: Dict[str, Any], verbose: bool = False) -> GradeResult:
