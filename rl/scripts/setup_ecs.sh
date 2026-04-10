@@ -69,35 +69,22 @@ mkdir -p "$OPENCLAW_DIR"
 # 初始化 OpenClaw (创建默认配置)
 openclaw init 2>/dev/null || true
 
-# 配置 openclaw.json: 添加 DashScope provider (for judge)
+# 配置 openclaw.json: 只保留 OpenClaw 运行所需的最小配置
+# DashScope judge 走 RunPod 侧 `scripts/lib_grading.py`，不需要写进 ECS 的 OpenClaw 全局配置
 OPENCLAW_CONFIG="$OPENCLAW_DIR/openclaw.json"
 if [ -f "$OPENCLAW_CONFIG" ]; then
     echo "OpenClaw 配置已存在: $OPENCLAW_CONFIG"
-    echo "请手动配置 judge 模型的 DashScope API key"
+    echo "保留现有配置；如其中仍包含 dashscope provider，建议手动清理掉"
 else
     cat > "$OPENCLAW_CONFIG" << 'EOJSON'
 {
   "gateway": {
     "port": 18789,
     "bind": "loopback"
-  },
-  "models": {
-    "mode": "merge",
-    "providers": {
-      "dashscope": {
-        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "apiKey": "${DASHSCOPE_API_KEY}",
-        "api": "openai-completions",
-        "models": [
-          {"id": "qwen-plus", "name": "qwen-plus"}
-        ]
-      }
-    }
   }
 }
 EOJSON
     echo "创建了默认 OpenClaw 配置"
-    echo "请设置环境变量: export DASHSCOPE_API_KEY=sk-xxx"
 fi
 
 # 创建 workspace 目录
@@ -113,9 +100,7 @@ echo "  Python: $(python3 --version)"
 echo "  OpenClaw: $(openclaw --version 2>/dev/null || echo 'ok')"
 echo ""
 echo "  下一步:"
-echo "  1. 设置 DashScope API key:"
-echo "     export DASHSCOPE_API_KEY=sk-xxx"
-echo "  2. 确认 RunPod 的 SSH 公钥已添加到 ~/.ssh/authorized_keys"
-echo "  3. 测试 OpenClaw:"
+echo "  1. 确认 RunPod 的 SSH 公钥已添加到 ~/.ssh/authorized_keys"
+echo "  2. 测试 OpenClaw:"
 echo "     openclaw agent --message 'hello' --local"
 echo "=========================================="
