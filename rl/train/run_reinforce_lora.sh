@@ -86,6 +86,8 @@ MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-8192}"
 # 否则 val 步上没有新 checkpoint，剪枝不会跑、旧目录会堆在盘上。
 PINCHBENCH_BEST_CKPT="${PINCHBENCH_BEST_CKPT:-1}"
 export PINCHBENCH_BEST_CKPT
+# veRL: auto=从 default_local_dir 找最新 ckpt 续训；disable=从头训练（仍建议删掉旧 global_step_* 省盘）
+TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-auto}"
 TEST_FREQ="${TEST_FREQ:-5}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # BEST_CKPT=0 时：只保留最近 N 个 global_step_*
 MAX_CRITIC_CKPT_TO_KEEP="${MAX_CRITIC_CKPT_TO_KEEP:-1}"  # 无 critic 时无影响
@@ -122,6 +124,7 @@ echo "  Grading judge: ${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus} @ ${PINCHBENCH
 echo "  数据: ${DATA_DIR}"
 echo "  输出: ${OUTPUT_DIR}"
 echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  save_freq: ${SAVE_FREQ}  test_freq: ${TEST_FREQ}"
+echo "  trainer.resume_mode: ${TRAINER_RESUME_MODE}"
 if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
   echo "  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
 fi
@@ -371,4 +374,5 @@ python3 -m verl.trainer.main_ppo \
     trainer.max_critic_ckpt_to_keep="${MAX_CRITIC_CKPT_TO_KEEP}" \
     trainer.test_freq="${TEST_FREQ}" \
     trainer.total_epochs=20 \
+    trainer.resume_mode="${TRAINER_RESUME_MODE}" \
     trainer.default_local_dir="${OUTPUT_DIR}"
