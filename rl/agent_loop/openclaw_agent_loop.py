@@ -74,8 +74,10 @@ class OpenClawConfig:
     pinchbench_dir: str = ""
     reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
-    agent_timeout: float = 120.0
+    agent_timeout: float = 240.0
     max_turns: int = 5
+    # turn>0 且 OpenClaw 请求 messages<=2 连续达到此次数则判为卡死；0=关闭该检测
+    stuck_retry_threshold: int = 2
     prm_vllm_base_url: str = "http://localhost:9090/v1"
     prm_model: str = "Qwen/Qwen3-4B"
     prm_api_key: str = "dummy"
@@ -92,8 +94,9 @@ class OpenClawConfig:
             pinchbench_dir=os.environ.get("PINCHBENCH_DIR", ""),
             reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
-            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "120")),
+            agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "240")),
             max_turns=int(os.environ.get("MAX_TURNS", "5")),
+            stuck_retry_threshold=int(os.environ.get("OPENCLAW_STUCK_RETRY_THRESHOLD", "2")),
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:9090/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen/Qwen3-4B"),
             prm_api_key=os.environ.get("PRM_API_KEY", "dummy"),
@@ -211,12 +214,16 @@ class OpenClawAgentLoop(AgentLoopBase):
                     break
 
                 n_msg = len(req.messages)
-                if turn_count > 0 and n_msg <= 2 and retry_count >= 2:
-                    logger.warning("OpenClaw stuck in retry loop (turn=%d, retries=%d), breaking", turn_count, retry_count)
+                thr = self.oc_config.stuck_retry_threshold
+                if thr > 0 and turn_count > 0 and n_msg <= 2 and retry_count >= thr:
+                    logger.warning(
+                        "OpenClaw stuck in retry loop (turn=%d, retries=%d, threshold=%d), breaking",
+                        turn_count, retry_count, thr,
+                    )
                     req.response_error = "retry loop detected"
                     await proxy.send_response(req)
                     break
-                if turn_count > 0 and n_msg <= 2:
+                if thr > 0 and turn_count > 0 and n_msg <= 2:
                     retry_count += 1
                 else:
                     retry_count = 0
