@@ -594,16 +594,29 @@ class OpenClawAgentLoop(AgentLoopBase):
 
     # ── Reward computation ──
 
+    def _get_vllm_base_url(self) -> str:
+        """Get actual vLLM HTTP URL from server_manager (Ray-assigned dynamic port)."""
+        try:
+            addrs = list(self.server_manager._server_id_to_handle.keys())
+            if addrs:
+                url = f"http://{addrs[0]}/v1"
+                logger.info("Detected vLLM URL: %s", url)
+                return url
+        except Exception:
+            pass
+        return self.oc_config.prm_vllm_base_url
+
     async def _compute_rewards(
         self, trajectory: list[dict], terminal_success: bool, task_id: str, task_prompt: str,
     ) -> list[float]:
         try:
             from .reward import compute_episode_rewards_async
+            vllm_url = self._get_vllm_base_url()
             return await compute_episode_rewards_async(
                 trajectory, terminal_success, task_id,
                 task_prompt=task_prompt,
                 mode=self.oc_config.reward_mode,
-                vllm_base_url=self.oc_config.prm_vllm_base_url,
+                vllm_base_url=vllm_url,
                 judge_model=self.oc_config.prm_model,
                 judge_api_key=self.oc_config.prm_api_key,
             )
