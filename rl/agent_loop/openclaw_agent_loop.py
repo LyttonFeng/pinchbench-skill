@@ -584,7 +584,28 @@ class OpenClawAgentLoop(AgentLoopBase):
                 "status": "completed",
             }
             skill_dir = Path(self.oc_config.pinchbench_dir)
-            result = grade_task(task=task, execution_result=execution_result, skill_dir=skill_dir)
+            judge_model = os.environ.get("PINCHBENCH_GRADE_JUDGE_MODEL", "qwen-plus")
+            judge_backend = os.environ.get("PINCHBENCH_GRADE_JUDGE_BACKEND", "api")
+            judge_base_url = os.environ.get(
+                "PINCHBENCH_GRADE_JUDGE_BASE_URL",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            )
+            judge_api_key = os.environ.get(
+                "PINCHBENCH_GRADE_JUDGE_API_KEY",
+                os.environ.get("JUDGE_API_KEY", os.environ.get("DASHSCOPE_API_KEY", "")),
+            )
+            if judge_backend == "api" and judge_api_key:
+                result = grade_task(
+                    task=task,
+                    execution_result=execution_result,
+                    skill_dir=skill_dir,
+                    judge_model=judge_model,
+                    judge_backend=judge_backend,
+                    judge_base_url=judge_base_url,
+                    judge_api_key=judge_api_key,
+                )
+            else:
+                result = grade_task(task=task, execution_result=execution_result, skill_dir=skill_dir)
             score = getattr(result, "score", 0.0)
             logger.info("Grading %s: score=%.2f", task_id, score)
             return score >= 0.5

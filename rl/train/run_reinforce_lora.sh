@@ -18,7 +18,7 @@
 #   # Step 2: 设置环境变量
 #   export OPENCLAW_HOST=8.163.82.224       # 阿里云 ECS
 #   export OPENCLAW_USER=root
-#   export JUDGE_API_KEY=sk-xxx             # DashScope API key
+#   export DASHSCOPE_API_KEY=sk-xxx         # DashScope API key
 #   export REWARD_MODE=oracle               # ablation mode
 #
 #   # Step 3: 启动训练
@@ -99,6 +99,7 @@ echo "  Batch size: ${BATCH_SIZE}"
 echo "  Reward mode: ${REWARD_MODE}"
 echo "  OpenClaw host: ${OPENCLAW_HOST:-localhost}"
 echo "  Judge model: ${JUDGE_MODEL:-qwen-plus}"
+echo "  Grading judge: ${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus} @ ${PINCHBENCH_GRADE_JUDGE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
 echo "  数据: ${DATA_DIR}"
 echo "  输出: ${OUTPUT_DIR}"
 echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  save_freq: ${SAVE_FREQ}  test_freq: ${TEST_FREQ}"
@@ -126,6 +127,11 @@ export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
 # vLLM 404s like "The model `Qwen3-4B` does not exist."
 export PRM_MODEL="${PRM_MODEL:-${MODEL}}"
 export PRM_API_KEY="${PRM_API_KEY:-dummy}"
+# PinchBench grading judge: use DashScope qwen-plus if API key is available.
+export PINCHBENCH_GRADE_JUDGE_MODEL="${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus}"
+export PINCHBENCH_GRADE_JUDGE_BACKEND="${PINCHBENCH_GRADE_JUDGE_BACKEND:-api}"
+export PINCHBENCH_GRADE_JUDGE_BASE_URL="${PINCHBENCH_GRADE_JUDGE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
+export PINCHBENCH_GRADE_JUDGE_API_KEY="${PINCHBENCH_GRADE_JUDGE_API_KEY:-${DASHSCOPE_API_KEY:-${JUDGE_API_KEY:-}}}"
 
 mkdir -p "${OUTPUT_DIR}" "${TENSORBOARD_DIR}"
 # TensorBoard：veRL 读 TENSORBOARD_DIR（verl/utils/tracking.py）；须 pip install tensorboard
