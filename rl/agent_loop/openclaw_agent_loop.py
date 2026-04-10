@@ -45,6 +45,7 @@ if not logger.handlers:
 
 DEFAULT_WEB_SEARCH_SKILLS = (
     "web_search",
+    "ddg-search",
     "search-web",
     "web-search-free",
     "ddg-web-search",

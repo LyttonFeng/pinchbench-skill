@@ -212,6 +212,7 @@ search_aliases = parse_aliases(
     "OPENCLAW_WEB_SEARCH_SKILLS",
     (
         "web_search",
+        "ddg-search",
         "search-web",
         "web-search-free",
         "ddg-web-search",
