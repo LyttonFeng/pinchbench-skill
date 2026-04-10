@@ -736,13 +736,11 @@ def main():
                 grade_kwargs = dict(
                     task=task, execution_result=result, skill_dir=skill_dir, verbose=args.verbose
                 )
-                if args.judge:
-                    grade_kwargs["judge_model"] = args.judge
+                if judge_cfg["judge_backend"] == "api":
+                    grade_kwargs["judge_model"] = judge_cfg["judge_model"]
                     grade_kwargs["judge_backend"] = "api"
-                    if args.base_url:
-                        grade_kwargs["judge_base_url"] = args.base_url
-                    if args.api_key:
-                        grade_kwargs["judge_api_key"] = args.api_key
+                    grade_kwargs["judge_base_url"] = judge_cfg["judge_base_url"]
+                    grade_kwargs["judge_api_key"] = judge_cfg["judge_api_key"]
                 grade = grade_task(**grade_kwargs)
             except Exception as exc:
                 if execution_error:
