@@ -28,7 +28,7 @@ export PRM_MODEL="Qwen3-4B"
 export PRM_API_KEY="dummy"
 export HF_HOME="/workspace/hf_cache"
 export PYTHONUNBUFFERED=1
-export AGENT_TIMEOUT=300
+export AGENT_TIMEOUT=120
 export MAX_TURNS=5
 
 cd "${REPO_DIR}"
