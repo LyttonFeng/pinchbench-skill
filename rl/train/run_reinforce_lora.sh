@@ -87,6 +87,9 @@ export PRM_API_KEY="${PRM_API_KEY:-dummy}"
 
 mkdir -p "${OUTPUT_DIR}"
 
+# TensorBoard：veRL 写入 TENSORBOARD_DIR（默认 tensorboard_log/<project>/<experiment>）
+export TENSORBOARD_DIR="${TENSORBOARD_DIR:-${OUTPUT_DIR}/tensorboard}"
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="${TRAIN_FILE}" \
@@ -135,7 +138,7 @@ python3 -m verl.trainer.main_ppo \
     reward.custom_reward_function.name=compute_score \
     trainer.critic_warmup=0 \
     trainer.val_before_train=False \
-    trainer.logger='["console"]' \
+    trainer.logger='["console","tensorboard"]' \
     trainer.project_name=pinchbench_rl \
     trainer.experiment_name="reinforce_lora_${REWARD_MODE}_$(date +%Y%m%d_%H%M)" \
     trainer.n_gpus_per_node="${N_GPUS}" \

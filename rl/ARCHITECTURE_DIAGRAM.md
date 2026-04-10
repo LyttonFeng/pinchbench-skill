@@ -121,6 +121,22 @@ Episode 结束
 | **PRM Self-Judge** | Qwen3-4B 自评自己的行为 | "correctly reads config.json" → +0.20 |
 | **ModelProxy** | HTTP 反向代理 | OpenClaw → ModelProxy → vLLM generate |
 
+## TensorBoard（看收敛曲线）
+
+训练脚本 `run_reinforce_lora.sh` 已启用 `trainer.logger=["console","tensorboard"]`，日志目录：
+
+- 环境变量 `TENSORBOARD_DIR`（默认 `rl/checkpoints/reinforce_lora/tensorboard`）
+
+RunPod 上查看：
+
+```bash
+pip install tensorboard  # 若未装
+bash rl/scripts/start_tensorboard.sh
+# 浏览器打开 http://<pod-ip>:6006（需在 RunPod 暴露 6006 端口）
+```
+
+重点 scalar：`critic/score/mean`、`actor/pg_loss`、`actor/kl_loss`、`rollout_corr/kl`、`actor/entropy`。
+
 ## 关键配置
 
 | 参数 | 值 | 说明 |
