@@ -19,7 +19,9 @@ pip install -q \
     datasets
 
 # veRL
-pip install -q verl
+# Pin the version that provides verl.experimental.agent_loop.AgentLoopBase,
+# which OpenClawAgentLoop imports.
+pip install -q --break-system-packages verl==0.7.1
 
 echo ""
 echo "验证 GPU..."
@@ -28,6 +30,15 @@ python -c "import torch; print('CUDA:', torch.cuda.is_available(), '| 设备:', 
 echo ""
 echo "验证 vLLM..."
 python -c "import vllm; print('vLLM 版本:', vllm.__version__)"
+
+echo ""
+echo "验证 veRL agent loop..."
+python - <<'PY'
+import verl
+print('veRL 版本:', verl.__version__)
+from verl.experimental.agent_loop.agent_loop import AgentLoopBase
+print('veRL experimental.agent_loop: OK')
+PY
 
 echo ""
 echo "=============================="
