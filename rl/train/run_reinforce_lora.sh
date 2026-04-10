@@ -56,6 +56,16 @@ LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
 REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracle-judge
 
+# Checkpoint 磁盘（RunPod /workspace 常不大；满盘会导致 torch.save zip 报错）
+# 每次保存会写一个目录: ${OUTPUT_DIR}/global_step_{N}/
+#   - actor/          FSDP 权重分片 + optimizer（体积最大，数 GB 级）
+#   - actor/lora_adapter/  仅 LoRA（adapter_model.safetensors，几十 MB，推理主要用这个）
+#   - data.pt         dataloader 状态（很小）
+#   - latest_checkpointed_iteration.txt 在 OUTPUT_DIR 根目录
+SAVE_FREQ="${SAVE_FREQ:-20}"                      # 每多少 global step 存一次（加大可省空间）
+MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # 只保留最近 N 个 global_step_*（1=最省盘）
+MAX_CRITIC_CKPT_TO_KEEP="${MAX_CRITIC_CKPT_TO_KEEP:-1}"  # 无 critic 时无影响
+
 # ── 环境变量检查 ──
 echo "=============================="
 echo "  veRL Online RL (REINFORCE++ + LoRA)"
@@ -68,6 +78,7 @@ echo "  OpenClaw host: ${OPENCLAW_HOST:-localhost}"
 echo "  Judge model: ${JUDGE_MODEL:-qwen-plus}"
 echo "  数据: ${DATA_DIR}"
 echo "  输出: ${OUTPUT_DIR}"
+echo "  save_freq: ${SAVE_FREQ}  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
 echo "=============================="
 
 # 检查 prompt 数据
@@ -143,7 +154,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.experiment_name="reinforce_lora_${REWARD_MODE}_$(date +%Y%m%d_%H%M)" \
     trainer.n_gpus_per_node="${N_GPUS}" \
     trainer.nnodes=1 \
-    trainer.save_freq=10 \
+    trainer.save_freq="${SAVE_FREQ}" \
+    trainer.max_actor_ckpt_to_keep="${MAX_ACTOR_CKPT_TO_KEEP}" \
+    trainer.max_critic_ckpt_to_keep="${MAX_CRITIC_CKPT_TO_KEEP}" \
     trainer.test_freq=5 \
     trainer.total_epochs=20 \
     trainer.default_local_dir="${OUTPUT_DIR}"

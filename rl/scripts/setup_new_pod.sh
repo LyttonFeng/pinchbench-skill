@@ -48,6 +48,12 @@
 #  8. OpenClaw system prompt 约 14000 tokens
 #     → max_prompt_length 必须 ≥ 16384，否则 prompt 被截断丢失 tool 定义
 #
+#  9. 磁盘满 → checkpoint 保存失败
+#     → PyTorch 报错: unexpected pos ... inline_container.cc（实为写盘失败）
+#     → df -h /workspace；HF_HOME、docker 层、旧 global_step_* 都会占空间
+#     → run_reinforce_lora.sh 已默认: save_freq=20, max_actor_ckpt_to_keep=1
+#     → 推理只需 actor/lora_adapter/，可手动删掉更老的 global_step_* 目录
+#
 #  ECS 信息 (阿里云 4核8G):
 #    IP:   8.163.82.224
 #    User: root
