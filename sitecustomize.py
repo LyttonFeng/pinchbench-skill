@@ -19,4 +19,19 @@ def _maybe_patch_verl_best_ckpt() -> None:
         print(f"[sitecustomize] PINCHBENCH_BEST_CKPT patch skipped: {e}", file=sys.stderr)
 
 
+def _maybe_patch_verl_debug_metrics() -> None:
+    v = os.environ.get("PINCHBENCH_DEBUG_METRICS_PATCH", "1").strip().lower()
+    if v in ("0", "false", "no", "off"):
+        return
+    try:
+        from rl.verl_debug_metrics_patch import apply_patch
+
+        apply_patch()
+    except Exception as e:
+        import sys
+
+        print(f"[sitecustomize] debug metrics patch skipped: {e}", file=sys.stderr)
+
+
+_maybe_patch_verl_debug_metrics()
 _maybe_patch_verl_best_ckpt()

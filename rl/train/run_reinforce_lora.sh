@@ -43,6 +43,7 @@ MODEL="${VERL_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${VERL_N_GPUS:-1}"
 
 # ── Python path (确保 rl 包可以被 import) ──
+# 仓库根 sitecustomize.py：默认可选 patch veRL（空 rollout_probs_diff、best ckpt 等），见 PINCHBENCH_DEBUG_METRICS_PATCH / PINCHBENCH_BEST_CKPT
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 # 使用 SDPA 代替 FlashAttention2（避免 flash_attn 包兼容性问题）
 export ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
@@ -121,7 +122,7 @@ fi
 export PINCHBENCH_DIR="${REPO_ROOT}"
 export REWARD_MODE="${REWARD_MODE}"
 # ECS OpenClaw is expected to be directly on PATH after installer setup.
-# Leave this empty unless a site-specific activation command is required.
+# Do not inject a remote activation command unless a site-specific setup requires it.
 export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
 # Lower the terminal reward weight so intermediate process signals matter more.
 export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.3}"

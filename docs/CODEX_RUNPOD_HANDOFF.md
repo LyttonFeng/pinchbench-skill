@@ -167,6 +167,7 @@ git rev-parse --short HEAD
 | `rl/train/run_reinforce_lora.sh` | 训练入口、checkpoint/val 频率、`PYTHONPATH`、`PINCHBENCH_BEST_CKPT` |
 | `sitecustomize.py` | 条件加载 best-ckpt patch |
 | `rl/verl_best_ckpt_patch.py` | veRL `_validate` 后按 val 指标删 checkpoint |
+| `rl/verl_debug_metrics_patch.py` | 防止 `calculate_debug_metrics` 在空 tensor 上 `torch.max` 崩训（默认经 `sitecustomize` 启用） |
 | `rl/scripts/prune_old_ckpts.sh` | Pod 上手动释放磁盘 |
 | `rl/scripts/setup_new_pod.sh` | RunPod 初始化、常见坑（含磁盘满） |
 | `rl/scripts/start_tensorboard.sh` | TensorBoard（若存在） |
