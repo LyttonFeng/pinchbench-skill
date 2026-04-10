@@ -16,7 +16,7 @@
 #   python rl/train/prepare_prompts.py --tasks-dir tasks/ --output-dir rl/data/prompts/
 #
 #   # Step 2: 设置环境变量
-#   export OPENCLAW_HOST=8.163.82.224       # 阿里云 ECS
+#   export OPENCLAW_HOST=<ECS 公网 IP>    # 以云控制台为准，勿写死在仓库
 #   export OPENCLAW_USER=root
 #   export DASHSCOPE_API_KEY=sk-xxx         # DashScope API key
 #   export REWARD_MODE=oracle               # ablation mode
@@ -148,8 +148,8 @@ export PINCHBENCH_GRADE_JUDGE_API_KEY="${PINCHBENCH_GRADE_JUDGE_API_KEY:-${DASHS
 # 本地-only 调试：PINCHBENCH_ALLOW_LOCAL_OPENCLAW=1
 _oc_host="${OPENCLAW_HOST:-localhost}"
 if { [ "${_oc_host}" = "localhost" ] || [ "${_oc_host}" = "127.0.0.1" ]; } && [ "${PINCHBENCH_ALLOW_LOCAL_OPENCLAW:-0}" != "1" ]; then
-    echo "ERROR: OPENCLAW_HOST 为 ${_oc_host}。在 RunPod 上请指向 ECS，例如:"
-    echo "  export OPENCLAW_HOST=8.163.82.224"
+    echo "ERROR: OPENCLAW_HOST 为 ${_oc_host}。在 RunPod 上请设为 ECS 公网 IP（以云控制台为准，会变）:"
+    echo "  export OPENCLAW_HOST=<你的 ECS IP>"
     echo "若确要本机 OpenClaw 调试: PINCHBENCH_ALLOW_LOCAL_OPENCLAW=1 bash rl/train/run_reinforce_lora.sh"
     exit 1
 fi

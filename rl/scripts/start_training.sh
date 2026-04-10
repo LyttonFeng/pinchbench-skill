@@ -4,12 +4,15 @@
 #
 #  用法: bash rl/scripts/start_training.sh
 #
-#  ECS 信息:
-#    IP:   8.163.82.224
-#    User: root
-#    Port: 22
+#  运行前: export OPENCLAW_HOST=<ECS 公网 IP>（与云控制台一致）
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
+
+if [ -z "${OPENCLAW_HOST:-}" ]; then
+    echo "ERROR: 请设置 OPENCLAW_HOST 为当前 ECS 公网 IP（云控制台查看，非固定）:"
+    echo "  export OPENCLAW_HOST=<...>"
+    exit 1
+fi
 
 REPO_DIR="/workspace/pinchbench-skill"
 LOG_FILE="/workspace/train_$(date +%Y%m%d_%H%M).log"
@@ -17,7 +20,7 @@ TMUX_SESSION="train"
 
 # ── 环境变量 ──
 export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
-export OPENCLAW_HOST="8.163.82.224"
+export OPENCLAW_HOST
 export OPENCLAW_USER="root"
 export OPENCLAW_SSH_KEY="/root/.ssh/id_ed25519"
 export OPENCLAW_PORT="22"

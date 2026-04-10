@@ -2,8 +2,8 @@
 # 阿里云 ECS 环境初始化脚本
 # 在 ECS (Ubuntu 22.04) 上安装 OpenClaw + PinchBench 运行环境
 #
-# 用法（从本地执行）：
-#   ssh root@8.163.82.224 'bash -s' < rl/scripts/setup_ecs.sh
+# 用法（从本地执行，把 <ECS_IP> 换成当前公网 IP）：
+#   ssh root@<ECS_IP> 'bash -s' < rl/scripts/setup_ecs.sh
 #
 # 或者 SSH 到 ECS 后直接运行：
 #   bash setup_ecs.sh

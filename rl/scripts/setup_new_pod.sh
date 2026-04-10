@@ -55,16 +55,19 @@
 #       再 bash rl/scripts/prune_old_ckpts.sh（有 best_ckpt_state.json 则只留最佳步）
 #     → run_reinforce_lora.sh: 默认 PINCHBENCH_BEST_CKPT=1 会按 val 只留最佳；否则可调 save_freq / max_actor_ckpt
 #
-#  ECS 信息 (阿里云 4核8G):
-#    IP:   8.163.82.224
-#    User: root
-#    Port: 22
+#  ECS：公网 IP 会变，运行前在 shell 里 export（勿写死在仓库）：
+#    export ECS_HOST=<阿里云控制台显示的公网 IP>
+#    User/Port 默认 root / 22，可用 ECS_USER / ECS_PORT 覆盖
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-ECS_HOST="8.163.82.224"
-ECS_USER="root"
-ECS_PORT=22
+if [ -z "${ECS_HOST:-}" ]; then
+    echo "ERROR: 请先设置 ECS_HOST 为当前 ECS 公网 IP（云控制台查看，非固定）:"
+    echo "  export ECS_HOST=<...>"
+    exit 1
+fi
+ECS_USER="${ECS_USER:-root}"
+ECS_PORT="${ECS_PORT:-22}"
 REPO_URL="https://github.com/LyttonFeng/pinchbench-skill.git"
 REPO_DIR="/workspace/pinchbench-skill"
 HF_CACHE="/workspace/hf_cache"

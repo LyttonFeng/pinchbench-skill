@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -29,8 +30,19 @@ logger = logging.getLogger(__name__)
 
 VLLM_URL = "http://localhost:8000/v1/chat/completions"
 VLLM_MODEL = "Qwen3-4B"
-ECS_HOST = "8.163.82.224"
-SSH_KEY = "/root/.ssh/id_ed25519"
+
+
+def _ecs_host() -> str:
+    h = (os.environ.get("OPENCLAW_HOST") or os.environ.get("ECS_HOST") or "").strip()
+    if not h or h in ("localhost", "127.0.0.1"):
+        raise SystemExit(
+            "Set OPENCLAW_HOST or ECS_HOST to your ECS public IP (from cloud console; do not hardcode in repo)."
+        )
+    return h
+
+
+ECS_HOST = _ecs_host()
+SSH_KEY = os.environ.get("OPENCLAW_SSH_KEY", "/root/.ssh/id_ed25519")
 PINCHBENCH_DIR = "/workspace/pinchbench-skill"
 
 
@@ -194,7 +206,7 @@ async def run_task(task_id: str, max_turns: int = 15):
         await proc.communicate()
 
     # Sync workspace files from ECS for grading
-    import os, subprocess as sp
+    import subprocess as sp
     local_ws = f"/tmp/pinchbench_local/{task_id}"
     os.makedirs(local_ws, exist_ok=True)
     logger.info("Syncing workspace from ECS %s → %s ...", ws, local_ws)

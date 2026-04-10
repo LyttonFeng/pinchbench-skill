@@ -2,8 +2,10 @@
 set -euo pipefail
 cd /workspace/pinchbench-skill
 
+: "${OPENCLAW_HOST:?set OPENCLAW_HOST to your ECS public IP (from cloud console)}"
+
 export PYTHONPATH="/workspace/pinchbench-skill:${PYTHONPATH:-}"
-export OPENCLAW_HOST="8.163.82.224"
+export OPENCLAW_HOST
 export OPENCLAW_USER="root"
 export OPENCLAW_SSH_KEY="/root/.ssh/id_ed25519"
 export PINCHBENCH_DIR="/workspace/pinchbench-skill"

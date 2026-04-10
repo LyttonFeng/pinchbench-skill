@@ -23,7 +23,16 @@ from model_proxy import ModelProxy, ModelRequest
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("debug_multi_turn")
 
-ECS_HOST = os.environ.get("ECS_HOST", "8.163.82.224")
+def _ecs_host() -> str:
+    h = (os.environ.get("OPENCLAW_HOST") or os.environ.get("ECS_HOST") or "").strip()
+    if not h or h in ("localhost", "127.0.0.1"):
+        raise SystemExit(
+            "Set OPENCLAW_HOST or ECS_HOST to your ECS public IP (from cloud console; IPs change)."
+        )
+    return h
+
+
+ECS_HOST = _ecs_host()
 ECS_PORT = int(os.environ.get("ECS_PORT", "22"))
 ECS_USER = os.environ.get("ECS_USER", "root")
 SSH_KEY = os.environ.get("SSH_KEY", "/root/.ssh/id_ed25519")
