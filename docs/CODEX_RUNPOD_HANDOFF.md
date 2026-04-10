@@ -120,6 +120,37 @@ bash rl/scripts/prune_old_ckpts.sh
 - Agent 跑在 **阿里云 ECS**，训练在 RunPod；`OPENCLAW_HOST` 等指向 ECS（`setup_new_pod.sh` 与脚本注释中有 IP/用户说明）。
 - Reward 模式：`REWARD_MODE` = `baseline` / `rule` / `self-judge` / `oracle-judge` 等（见 `run_reinforce_lora.sh` 头注释）。
 
+### 7.1 最近一次可恢复快照
+
+当前能稳定推进到 vLLM/Ray 初始化的配置基线是：
+
+- Repo HEAD：`f34aaec`（`Reduce vLLM max model length`）
+- 训练入口：`rl/train/run_reinforce_lora.sh`
+- 模型：`Qwen/Qwen3-4B`
+- LoRA：`rank=32`, `alpha=64`
+- 单卡 actor：`actor_rollout_ref.actor.fsdp_config.param_offload=True`
+- rollout：
+  - `actor_rollout_ref.rollout.gpu_memory_utilization=0.30`
+  - `actor_rollout_ref.rollout.max_model_len=19456`
+  - `actor_rollout_ref.rollout.tensor_model_parallel_size=1`
+- judge：
+  - `PINCHBENCH_GRADE_JUDGE_BACKEND=api`
+  - `PINCHBENCH_GRADE_JUDGE_MODEL=qwen-plus`
+  - `PINCHBENCH_GRADE_JUDGE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
+- OpenClaw：
+  - ECS 侧 `openclaw` 应直接在 PATH 上可用，不依赖 `coursebot`
+  - web-heavy 任务必须通过 preflight
+  - `ddg-search` 作为 `web_search` 别名
+  - `web-fetch` 作为 `web_fetch` 别名
+
+重启 pod 后先做：
+
+```bash
+cd /workspace/pinchbench-skill
+git pull --ff-only origin main
+git rev-parse --short HEAD
+```
+
 ---
 
 ## 8. 安全
