@@ -301,11 +301,16 @@ class OpenClawAgentLoop(AgentLoopBase):
         per_turn_rewards = await self._compute_rewards(
             trajectory_for_reward, terminal_success, task_id, task_prompt,
         )
-        total_reward = sum(per_turn_rewards) + terminal_reward
+        # per_turn_rewards already includes terminal_reward on the last turn
+        # (added by compute_episode_rewards_async), so do NOT add it again
+        total_reward = sum(per_turn_rewards)
+        logger.info("Reward: total=%.2f, terminal=%.1f, per_turn=%s, turns=%d, mode=%s",
+                     total_reward, terminal_reward, per_turn_rewards, turn_count, self.oc_config.reward_mode)
 
         # Assign per-turn rewards at <|im_end|> token positions
+        # terminal_reward=0 here because it's already in per_turn_rewards
         reward_at_tokens = self._assign_rewards(
-            all_response_ids, all_response_mask, per_turn_rewards, terminal_reward,
+            all_response_ids, all_response_mask, per_turn_rewards, 0.0,
         )
 
         response_length = self.rollout_config.response_length

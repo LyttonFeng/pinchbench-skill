@@ -449,34 +449,65 @@ def generic_rule_reward(
     all_turns: list[dict],
     task_id: str,
 ) -> float:
-    """Mode B: rule-based process reward. Fast, no LLM call."""
+    """Mode B: rule-based process reward. Fast, no LLM call.
+
+    Designed so that a model making valid tool calls gets positive reward,
+    even if the overall task fails (terminal_reward=-1). This ensures
+    non-zero gradient signal for learning tool usage.
+
+    Score range per turn: [-0.5, +0.3]
+    """
     content = turn.get("content", "")
     tool_name = _get_tool_name(turn)
+    tool_args = _get_tool_args(turn)
     reward = 0.0
 
+    # Reward for making a tool call (the key behavior we want to reinforce)
     if tool_name:
-        reward += 0.05
+        reward += 0.15  # significant positive signal for using tools
 
-    next_turns = all_turns[turn_index + 1:]
-    for t in next_turns:
-        if t.get("role") == "tool":
-            tr_content = t.get("content", "")
-            if tr_content.strip() and not _is_error_result(tr_content):
-                reward += 0.05
-            elif _is_error_result(tr_content):
-                reward -= 0.10
-            break
-        elif t.get("role") == "assistant":
-            break
+        # Extra reward for using well-formed arguments
+        if tool_args and len(str(tool_args)) > 5:
+            reward += 0.05
 
+        # Check tool result from environment
+        next_turns = all_turns[turn_index + 1:]
+        for t in next_turns:
+            if t.get("role") == "tool":
+                tr_content = t.get("content", "")
+                if tr_content.strip() and not _is_error_result(tr_content):
+                    reward += 0.10  # tool executed successfully
+                elif _is_error_result(tr_content):
+                    reward -= 0.05  # tool errored, mild penalty
+                break
+            elif t.get("role") == "assistant":
+                break
+
+        # Bonus for using appropriate tools
+        good_tools = {"read", "write", "edit", "exec", "web_search", "web_fetch",
+                       "bash", "file_read", "file_write", "shell"}
+        if tool_name.lower().replace("_", "") in {t.replace("_", "") for t in good_tools}:
+            reward += 0.05
+
+    # Penalty for empty responses without tool calls
     if not content.strip() and not tool_name:
-        reward -= 0.30
+        reward -= 0.20
 
+    # Penalty for refusal / hallucination patterns
     hallucination_patterns = [r"I don'?t have access to", r"As an AI", r"I'?m unable to"]
     for p in hallucination_patterns:
         if re.search(p, content, re.IGNORECASE):
-            reward -= 0.30
+            reward -= 0.20
             break
+
+    # Penalty for repeating same action as previous turn
+    prev_assistant = [t for t in prev_turns if t.get("role") == "assistant"]
+    if prev_assistant and tool_name:
+        prev_tool = _get_tool_name(prev_assistant[-1])
+        prev_args = str(_get_tool_args(prev_assistant[-1]))
+        cur_args = str(tool_args)
+        if prev_tool == tool_name and prev_args == cur_args:
+            reward -= 0.15  # repeating exact same action
 
     return max(-0.5, min(0.3, reward))
 
