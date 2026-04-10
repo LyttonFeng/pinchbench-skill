@@ -166,6 +166,14 @@ else
     echo "  ✓ veRL 已安装: ${VERL_VER}"
 fi
 
+# 2e. TensorBoard（veRL logger=tensorboard 时必需；否则无 events 文件）
+if ! python3 -c "import tensorboard" 2>/dev/null; then
+    echo "  安装 tensorboard..."
+    pip install --break-system-packages tensorboard
+else
+    echo "  ✓ tensorboard 已安装"
+fi
+
 echo "✓ 依赖安装完成"
 
 # ── 3. 克隆代码 ──

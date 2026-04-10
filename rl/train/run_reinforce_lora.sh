@@ -84,6 +84,11 @@ if [ "${PINCHBENCH_BEST_CKPT}" = "1" ] && [ "${SAVE_FREQ}" != "${TEST_FREQ}" ]; 
   echo "WARN: PINCHBENCH_BEST_CKPT=1 建议 SAVE_FREQ==TEST_FREQ（当前 save_freq=${SAVE_FREQ} test_freq=${TEST_FREQ}），否则部分 val 步无新 checkpoint、无法按 val 清理旧目录。"
 fi
 
+# 与本次 trainer.experiment_name 同一时间戳；TensorBoard 单独子目录，便于打包给同事
+RUN_STAMP="$(date +%Y%m%d_%H%M)"
+EXPERIMENT_NAME="reinforce_lora_${REWARD_MODE}_${RUN_STAMP}"
+export TENSORBOARD_DIR="${TENSORBOARD_DIR:-${OUTPUT_DIR}/tensorboard/${EXPERIMENT_NAME}}"
+
 # ── 环境变量检查 ──
 echo "=============================="
 echo "  veRL Online RL (REINFORCE++ + LoRA)"
@@ -100,6 +105,7 @@ echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  save_freq: ${SAVE_FREQ}  
 if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
   echo "  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
 fi
+echo "  tensorboard: ${TENSORBOARD_DIR}  (需: pip install tensorboard)"
 echo "=============================="
 
 # 检查 prompt 数据
@@ -117,10 +123,8 @@ export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
 export PRM_MODEL="${PRM_MODEL:-Qwen3-4B}"
 export PRM_API_KEY="${PRM_API_KEY:-dummy}"
 
-mkdir -p "${OUTPUT_DIR}"
-
-# TensorBoard：veRL 写入 TENSORBOARD_DIR（默认 tensorboard_log/<project>/<experiment>）
-export TENSORBOARD_DIR="${TENSORBOARD_DIR:-${OUTPUT_DIR}/tensorboard}"
+mkdir -p "${OUTPUT_DIR}" "${TENSORBOARD_DIR}"
+# TensorBoard：veRL 读 TENSORBOARD_DIR（verl/utils/tracking.py）；须 pip install tensorboard
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
@@ -172,7 +176,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.val_before_train=False \
     trainer.logger='["console","tensorboard"]' \
     trainer.project_name=pinchbench_rl \
-    trainer.experiment_name="reinforce_lora_${REWARD_MODE}_$(date +%Y%m%d_%H%M)" \
+    trainer.experiment_name="${EXPERIMENT_NAME}" \
     trainer.n_gpus_per_node="${N_GPUS}" \
     trainer.nnodes=1 \
     trainer.save_freq="${SAVE_FREQ}" \
