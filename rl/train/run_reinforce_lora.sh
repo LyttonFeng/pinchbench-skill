@@ -66,8 +66,13 @@ LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
 REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracle-judge
 # vLLM rollout：OOM 时先降 VLLM_GPU_MEM_UTIL（如 0.22）或 VLLM_MAX_MODEL_LEN（如 16384）
+# 大显存（如 A100 80GB）可酌情调高 VLLM_GPU_MEM_UTIL（如 0.40）以放大 KV 池、略提吞吐。
+# VLLM_MAX_MODEL_LEN 应 ≥ max_prompt + max_response（再加 ~1k～2k 余量）；否则长回复会被截断或报错。
 export VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.28}"
 export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-18432}"
+# 数据侧序列上限（加长输出时同步提高 VLLM_MAX_MODEL_LEN）
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-16384}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-8192}"
 
 # Checkpoint 磁盘（RunPod /workspace 常不大；满盘会导致 torch.save zip 报错）
 # 每次保存会写一个目录: ${OUTPUT_DIR}/global_step_{N}/
@@ -122,6 +127,10 @@ if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
 fi
 echo "  tensorboard: ${TENSORBOARD_DIR}  (需: pip install tensorboard)"
 echo "  vLLM: gpu_memory_utilization=${VLLM_GPU_MEM_UTIL} max_model_len=${VLLM_MAX_MODEL_LEN}"
+echo "  序列: max_prompt_length=${MAX_PROMPT_LENGTH} max_response_length=${MAX_RESPONSE_LENGTH}"
+if [ "$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))" -gt "${VLLM_MAX_MODEL_LEN}" ]; then
+  echo "  WARN: max_prompt+max_response 大于 VLLM_MAX_MODEL_LEN，请提高 VLLM_MAX_MODEL_LEN 或降低 prompt/response 上限"
+fi
 echo "=============================="
 
 # 检查 prompt 数据
@@ -309,8 +318,8 @@ python3 -m verl.trainer.main_ppo \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${VAL_FILE}" \
     data.train_batch_size="${BATCH_SIZE}" \
-    data.max_prompt_length=16384 \
-    data.max_response_length=8192 \
+    data.max_prompt_length="${MAX_PROMPT_LENGTH}" \
+    data.max_response_length="${MAX_RESPONSE_LENGTH}" \
     data.filter_overlong_prompts=True \
     data.truncation=left \
     data.return_raw_chat=True \
