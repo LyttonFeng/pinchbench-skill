@@ -85,10 +85,13 @@ MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-12288}"
 #   - latest_checkpointed_iteration.txt 在 OUTPUT_DIR 根目录
 #
 # PINCHBENCH_BEST_CKPT=1（默认）: 通过 repo 根目录 sitecustomize + rl/verl_best_ckpt_patch 在每次 val 后
-# 按 val-core/*/reward/mean@* 只保留历史最佳 global_step_*；此时应让 save_freq 与 test_freq 一致，
-# 否则 val 步上没有新 checkpoint，剪枝不会跑、旧目录会堆在盘上。
+# 按 val-core/*/reward/mean@* 保留最佳 global_step_*；PINCHBENCH_KEEP_LATEST_CKPT=1（默认）时同时保留
+# 当前验证步的目录（best + latest 最多两档）；=0 则非最佳步只删当前档（旧行为）。
+# 应让 save_freq 与 test_freq 一致，否则 val 步上没有新 checkpoint，剪枝不会跑、旧目录会堆在盘上。
 PINCHBENCH_BEST_CKPT="${PINCHBENCH_BEST_CKPT:-1}"
 export PINCHBENCH_BEST_CKPT
+PINCHBENCH_KEEP_LATEST_CKPT="${PINCHBENCH_KEEP_LATEST_CKPT:-1}"
+export PINCHBENCH_KEEP_LATEST_CKPT
 # veRL: auto=从 default_local_dir 找最新 ckpt 续训；disable=从头训练（仍建议删掉旧 global_step_* 省盘）
 TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-auto}"
 TEST_FREQ="${TEST_FREQ:-5}"
@@ -126,7 +129,7 @@ echo "  Judge model: ${JUDGE_MODEL:-qwen-plus}"
 echo "  Grading judge: ${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus} @ ${PINCHBENCH_GRADE_JUDGE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}"
 echo "  数据: ${DATA_DIR}"
 echo "  输出: ${OUTPUT_DIR}"
-echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  save_freq: ${SAVE_FREQ}  test_freq: ${TEST_FREQ}"
+echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  keep_latest_ckpt: ${PINCHBENCH_KEEP_LATEST_CKPT}  save_freq: ${SAVE_FREQ}  test_freq: ${TEST_FREQ}"
 echo "  trainer.resume_mode: ${TRAINER_RESUME_MODE}"
 if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
   echo "  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"

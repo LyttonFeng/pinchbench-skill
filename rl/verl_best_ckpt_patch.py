@@ -1,9 +1,16 @@
 """
-Monkey-patch veRL RayPPOTrainer._validate to keep only the best checkpoint on disk.
+Monkey-patch veRL RayPPOTrainer._validate to prune global_step_* under trainer.default_local_dir.
 
 After each validation, compares val-core/*/reward/mean@* (higher = better).
-- If this step's val is new best: delete all other global_step_* under trainer.default_local_dir.
-- Else: delete global_step_{current} only (the save from this step was not an improvement).
+
+- New best: delete all other global_step_*; keep only global_step_{step}.
+- Not best (default PINCHBENCH_KEEP_LATEST_CKPT=1): keep **both** global_step_{best_step}
+  and global_step_{step} (latest save); delete any other step dirs. Does **not** delete
+  the current step's directory.
+- Not best (PINCHBENCH_KEEP_LATEST_CKPT=0): legacy — delete global_step_{current} only.
+
+best_ckpt_state.json includes: best_val, best_step, latest_step.
+latest_checkpointed_iteration.txt is set to **latest_step** (most recent kept checkpoint).
 
 Requires PINCHBENCH_BEST_CKPT=1 and PYTHONPATH including repo root (for sitecustomize).
 Save should run on the same steps as validation (e.g. save_freq == test_freq) so each
@@ -13,6 +20,7 @@ val has a fresh checkpoint directory to judge.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -62,6 +70,7 @@ def _prune_checkpoints_keep_best(trainer, val_metrics: dict) -> None:
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
 
+    keep_latest = os.environ.get("PINCHBENCH_KEEP_LATEST_CKPT", "1") == "1"
     tracker = root / "latest_checkpointed_iteration.txt"
 
     def _iter_step_dirs():
@@ -72,33 +81,63 @@ def _prune_checkpoints_keep_best(trainer, val_metrics: dict) -> None:
             if suffix.isdigit():
                 yield p
 
+    def _write_state(bv: float, bs: int, ls: int) -> None:
+        state_path.write_text(
+            json.dumps(
+                {"best_val": bv, "best_step": bs, "latest_step": ls},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        if tracker.is_file():
+            tracker.write_text(str(ls), encoding="utf-8")
+
     if val_score > best_val:
         best_val = val_score
         best_step = step
+        latest_step = step
         removed = 0
         for p in _iter_step_dirs():
             if p.name == f"global_step_{step}":
                 continue
             shutil.rmtree(p, ignore_errors=True)
             removed += 1
-        state_path.write_text(
-            json.dumps({"best_val": best_val, "best_step": best_step}, indent=2),
-            encoding="utf-8",
-        )
-        if tracker.is_file():
-            tracker.write_text(str(best_step), encoding="utf-8")
+        _write_state(best_val, best_step, latest_step)
         print(
             f"[pinchbench_best_ckpt] new best val={best_val:.4f} step={step}; "
             f"removed {removed} older checkpoint dir(s)"
         )
     else:
-        shutil.rmtree(cur_dir, ignore_errors=True)
-        if best_step is not None and (root / f"global_step_{best_step}").is_dir():
-            if tracker.is_file():
-                tracker.write_text(str(best_step), encoding="utf-8")
+        if not keep_latest:
+            shutil.rmtree(cur_dir, ignore_errors=True)
+            if best_step is not None and (root / f"global_step_{best_step}").is_dir():
+                if tracker.is_file():
+                    tracker.write_text(str(best_step), encoding="utf-8")
+            print(
+                f"[pinchbench_best_ckpt] val={val_score:.4f} <= best={best_val:.4f}; "
+                f"removed global_step_{step} only (PINCHBENCH_KEEP_LATEST_CKPT=0)"
+            )
+            return
+
+        if best_step is None:
+            best_step = step
+        latest_step = step
+        to_keep = {best_step, step}
+        removed = 0
+        for p in _iter_step_dirs():
+            suffix = p.name[len("global_step_") :]
+            if not suffix.isdigit():
+                continue
+            num = int(suffix)
+            if num in to_keep:
+                continue
+            shutil.rmtree(p, ignore_errors=True)
+            removed += 1
+        _write_state(best_val, best_step, latest_step)
         print(
             f"[pinchbench_best_ckpt] val={val_score:.4f} <= best={best_val:.4f}; "
-            f"removed global_step_{step} only"
+            f"kept global_step_{best_step} (best) + global_step_{step} (latest); "
+            f"removed {removed} other dir(s)"
         )
 
 
@@ -121,4 +160,4 @@ def apply_patch() -> None:
 
     rt.RayPPOTrainer._validate = _validate  # type: ignore[method-assign]
     rt.RayPPOTrainer._pinchbench_best_ckpt_patched = True
-    print("[pinchbench_best_ckpt] RayPPOTrainer._validate patched (keep-best checkpoints)")
+    print("[pinchbench_best_ckpt] RayPPOTrainer._validate patched (keep best + optional latest)")

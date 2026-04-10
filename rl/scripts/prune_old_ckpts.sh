@@ -10,7 +10,8 @@
 #   CKPT_ROOT=/workspace/你的路径/rl/checkpoints/reinforce_lora bash rl/scripts/prune_old_ckpts.sh
 #
 # 默认策略：
-#   - 若存在 best_ckpt_state.json（训练开了 PINCHBENCH_BEST_CKPT=1）→ 只保留该最佳步
+#   - 若存在 best_ckpt_state.json（训练开了 PINCHBENCH_BEST_CKPT=1）→ 保留 best_step，
+#     若 JSON 含 latest_step 且与 best 不同则一并保留（与 verl_best_ckpt_patch 一致）
 #   - 否则 → 按步数保留最近 KEEP_LATEST_N 个目录（默认 1）
 #
 # 其它：
@@ -48,12 +49,29 @@ fi
 KEEP=()
 STATE="${CKPT_ROOT}/best_ckpt_state.json"
 if [ -f "${STATE}" ]; then
-  BEST_STEP="$(python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); print(int(d['best_step']))" "${STATE}" 2>/dev/null)" || BEST_STEP=""
-  if [ -n "${BEST_STEP}" ] && [ -d "${CKPT_ROOT}/global_step_${BEST_STEP}" ]; then
-    KEEP=("${BEST_STEP}")
-    echo "将保留 best_ckpt_state.json 中的步数: ${BEST_STEP}"
+  readarray -t KEEP < <(python3 -c "
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text())
+bs = d.get('best_step')
+ls = d.get('latest_step', bs)
+seen = set()
+for x in (bs, ls):
+    if x is None:
+        continue
+    n = int(x)
+    if n in seen:
+        continue
+    seen.add(n)
+    root = Path(sys.argv[2])
+    if (root / f'global_step_{n}').is_dir():
+        print(n)
+" "${STATE}" "${CKPT_ROOT}" 2>/dev/null) || true
+  if [ "${#KEEP[@]}" -gt 0 ]; then
+    echo "将保留 best_ckpt_state.json 中的步数: ${KEEP[*]}"
   else
-    echo "WARN: best_ckpt_state.json 存在但 global_step_${BEST_STEP:-?} 缺失，改用最近 KEEP_LATEST_N=${KEEP_LATEST_N}"
+    echo "WARN: best_ckpt_state.json 存在但对应 global_step_* 缺失，改用最近 KEEP_LATEST_N=${KEEP_LATEST_N}"
   fi
 fi
 
@@ -92,11 +110,12 @@ for s in "${ALL_STEPS[@]}"; do
   fi
 done
 
-if [ "${DRY_RUN}" != "1" ] && [ -f "${CKPT_ROOT}/latest_checkpointed_iteration.txt" ]; then
-  # 与保留目录对齐，避免 veRL 指向已删路径
-  LAST="${KEEP[-1]}"
-  echo "${LAST}" > "${CKPT_ROOT}/latest_checkpointed_iteration.txt"
-  echo "已写入 latest_checkpointed_iteration.txt -> ${LAST}"
+if [ "${DRY_RUN}" != "1" ] && [ -f "${CKPT_ROOT}/latest_checkpointed_iteration.txt" ] && [ -f "${STATE}" ]; then
+  LAST="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(int(d.get('latest_step', d['best_step'])))" "${STATE}" 2>/dev/null)" || LAST=""
+  if [ -n "${LAST}" ]; then
+    echo "${LAST}" > "${CKPT_ROOT}/latest_checkpointed_iteration.txt"
+    echo "已写入 latest_checkpointed_iteration.txt -> ${LAST}"
+  fi
 fi
 
 echo "完成。若仍满盘：可删 ${CKPT_ROOT}/tensorboard 下旧 run，或把 HuggingFace/torch 缓存移到大盘。"
