@@ -70,11 +70,12 @@ REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracl
 # vLLM rollout：OOM 时先降 VLLM_GPU_MEM_UTIL（如 0.22）或 VLLM_MAX_MODEL_LEN（如 16384）
 # 大显存（如 A100 80GB）可酌情调高 VLLM_GPU_MEM_UTIL（如 0.40）以放大 KV 池、略提吞吐。
 # VLLM_MAX_MODEL_LEN 应 ≥ max_prompt + max_response（再加 ~1k～2k 余量）；否则长回复会被截断或报错。
+# 默认 16384+12288=28672；此处给 29696 留约 1k 余量。显存紧张时可降 MAX_RESPONSE_LENGTH 或 VLLM_GPU_MEM_UTIL。
 export VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.28}"
-export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-18432}"
+export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-29696}"
 # 数据侧序列上限（加长输出时同步提高 VLLM_MAX_MODEL_LEN）
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-16384}"
-MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-8192}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-12288}"
 
 # Checkpoint 磁盘（RunPod /workspace 常不大；满盘会导致 torch.save zip 报错）
 # 每次保存会写一个目录: ${OUTPUT_DIR}/global_step_{N}/
