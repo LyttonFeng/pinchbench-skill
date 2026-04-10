@@ -177,6 +177,103 @@ print(result.stdout.strip())
 print("ECS OpenClaw preflight succeeded")
 PY
 
+if [ "${PINCHBENCH_SKIP_OPENCLAW_WEB_PREFLIGHT:-0}" != "1" ]; then
+python3 - <<'PY'
+import json
+import os
+import subprocess
+
+def parse_aliases(env_name: str, defaults: tuple[str, ...]) -> list[str]:
+    raw = os.environ.get(env_name, "").strip()
+    if raw:
+        aliases = [item.strip() for item in raw.split(",") if item.strip()]
+        if aliases:
+            return aliases
+    return list(defaults)
+
+def first_match(ready: set[str], aliases: list[str]) -> str | None:
+    for alias in aliases:
+        if alias in ready:
+            return alias
+    return None
+
+host = os.environ.get("OPENCLAW_HOST", "localhost")
+user = os.environ.get("OPENCLAW_USER", "root")
+port = os.environ.get("OPENCLAW_PORT", "22")
+ssh_key = os.environ.get("OPENCLAW_SSH_KEY", "/root/.ssh/id_ed25519")
+activate_cmd = os.environ.get("OPENCLAW_REMOTE_ACTIVATE_CMD", "").strip()
+remote_bin_dir = os.environ.get("OPENCLAW_REMOTE_BIN_DIR", "").strip()
+remote_prefix = activate_cmd or (f'export PATH="{remote_bin_dir}:$PATH"' if remote_bin_dir else "")
+remote_cmd = "openclaw skills list --eligible --json"
+if remote_prefix:
+    remote_cmd = f"{remote_prefix} && {remote_cmd}"
+
+search_aliases = parse_aliases(
+    "OPENCLAW_WEB_SEARCH_SKILLS",
+    (
+        "web_search",
+        "search-web",
+        "web-search-free",
+        "ddg-web-search",
+        "dashscope-web-search",
+        "local-web-search-skill",
+        "websearch",
+    ),
+)
+fetch_aliases = parse_aliases(
+    "OPENCLAW_WEB_FETCH_SKILLS",
+    (
+        "web_fetch",
+        "web-fetch",
+        "web-fetch-markdown",
+        "clean-web-fetch",
+        "jina-web-fetcher",
+        "safe-smart-web-fetch",
+        "webfetch",
+    ),
+)
+
+print(f"Preflighting ECS OpenClaw web skills: {user}@{host}:{port}")
+result = subprocess.run(
+    [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=10",
+        "-i", ssh_key,
+        "-p", str(port),
+        f"{user}@{host}",
+        remote_cmd,
+    ],
+    capture_output=True,
+    text=True,
+)
+if result.returncode != 0:
+    raise SystemExit(
+        f"ECS OpenClaw web-skill preflight failed (exit {result.returncode}): "
+        f"{result.stderr.strip() or result.stdout.strip()}"
+    )
+
+payload = json.loads(result.stdout)
+ready = {
+    item.get("name")
+    for item in payload.get("skills", [])
+    if isinstance(item, dict) and item.get("eligible") and not item.get("disabled")
+}
+search_match = first_match(ready, search_aliases)
+fetch_match = first_match(ready, fetch_aliases)
+print(f"Ready web search skill: {search_match or 'missing'}")
+print(f"Ready web fetch skill: {fetch_match or 'missing'}")
+if not search_match or not fetch_match:
+    raise SystemExit(
+        "ECS OpenClaw web-skill preflight failed: "
+        f"missing required skill(s). ready={sorted(ready)} "
+        f"search_aliases={search_aliases} fetch_aliases={fetch_aliases}. "
+        "Set OPENCLAW_WEB_SEARCH_SKILLS / OPENCLAW_WEB_FETCH_SKILLS if you intentionally mapped equivalents."
+    )
+print("ECS OpenClaw web-skill preflight succeeded")
+PY
+fi
+
 mkdir -p "${OUTPUT_DIR}" "${TENSORBOARD_DIR}"
 # TensorBoard：veRL 读 TENSORBOARD_DIR（verl/utils/tracking.py）；须 pip install tensorboard
 
