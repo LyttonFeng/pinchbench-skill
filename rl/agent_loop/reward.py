@@ -21,6 +21,11 @@ import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setLevel(logging.DEBUG)
+    logger.addHandler(_h)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -659,23 +664,23 @@ async def compute_episode_rewards_async(
             base_url = vllm_base_url
             model = judge_model
 
+            print(f"[PRM] Calling judge for turn {seq_idx}, url={base_url}, model={model}")
             r = await call_llm_judge(
                 prm_prompt,
                 vllm_base_url=base_url,
                 model=model,
                 api_key=judge_api_key,
             )
+            print(f"[PRM] Judge returned: {r}")
 
-            # Fallback: if judge returned exactly 0.0 (likely failure),
-            # blend with rule-based reward to ensure signal
             rule_r = generic_rule_reward(turn_idx, turn, prev_turns, trajectory, task_id)
             if r == 0.0:
                 r = rule_r
-                logger.info("PRM judge returned 0.0, fallback to rule reward: %.2f", r)
+                print(f"[PRM] Judge returned 0.0, fallback to rule: {r:.2f}")
             else:
-                # Blend: 70% judge + 30% rule for stability
-                r = 0.7 * r + 0.3 * rule_r
-                logger.info("PRM judge=%.2f, rule=%.2f, blended=%.2f", r / 0.7, rule_r, r)
+                blended = 0.7 * r + 0.3 * rule_r
+                print(f"[PRM] Judge={r:.2f}, rule={rule_r:.2f}, blended={blended:.2f}")
+                r = blended
 
         else:
             r = 0.0
