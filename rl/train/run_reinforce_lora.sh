@@ -57,6 +57,8 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 # 使用 SDPA 代替 FlashAttention2（避免 flash_attn 包兼容性问题）
 export ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 # 注意: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 与 vLLM 0.19 的 CuMemAllocator 不兼容
+# vLLM 用量统计：部分容器里 py-cpuinfo 会触发 JSONDecodeError（_report_usage_worker 后台线程，一般不影响推理）
+export VLLM_NO_USAGE_STATS="${VLLM_NO_USAGE_STATS:-1}"
 
 # ── 训练超参 ──
 BATCH_SIZE="${BATCH_SIZE:-1}"          # ECS 4核8G 资源有限，单并发最稳定
