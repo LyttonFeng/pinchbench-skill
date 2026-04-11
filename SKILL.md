@@ -18,6 +18,8 @@ PinchBench measures how well LLM models perform as the brain of an OpenClaw agen
 - [uv](https://docs.astral.sh/uv/) package manager
 - OpenClaw instance (this agent)
 
+**RL parity (forks with veRL / `OpenClawAgentLoop`):** When comparing these benchmark scores to training rollouts, set OpenClaw’s **`MAX_TURNS`** to the same value as `rl/train/run_reinforce_lora.sh` (default **10**). Otherwise multi-step tasks can hit different turn limits in training vs benchmark.
+
 ## Quick Start
 
 ```bash

@@ -4,6 +4,12 @@ PinchBench - OpenClaw Agent Benchmarking System
 
 This script orchestrates benchmarking of OpenClaw agents using tasks loaded
 from the tasks/ directory.
+
+When comparing results to RL in this repository (veRL + OpenClawAgentLoop),
+configure OpenClaw so MAX_TURNS matches rl/train/run_reinforce_lora.sh
+(default 10). Benchmark runs use per-task wall-clock timeouts; training also
+caps model rounds via MAX_TURNS, and values should stay aligned for fair
+train-vs-eval comparisons.
 """
 # /// script
 # requires-python = ">=3.10"
@@ -647,10 +653,8 @@ def main():
     if args.judge:
         judge_cfg["judge_model"] = args.judge
         judge_cfg["judge_backend"] = "api"
-        if args.base_url:
-            judge_cfg["judge_base_url"] = args.base_url
-        if args.api_key:
-            judge_cfg["judge_api_key"] = args.api_key
+        # Do not reuse --base-url / --api-key here: those are for the benchmark agent's
+        # LLM (e.g. vLLM). Judge URL/key come from PINCHBENCH_GRADE_JUDGE_* / DASHSCOPE_API_KEY.
     if judge_cfg["judge_backend"] == "api":
         preflight_judge_connection(
             judge_model=str(judge_cfg["judge_model"]),

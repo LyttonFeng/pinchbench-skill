@@ -117,6 +117,9 @@ RUN_STAMP="$(date +%Y%m%d_%H%M)"
 EXPERIMENT_NAME="reinforce_lora_${REWARD_MODE}_${RUN_STAMP}"
 export TENSORBOARD_DIR="${TENSORBOARD_DIR:-${OUTPUT_DIR}/tensorboard/${EXPERIMENT_NAME}}"
 
+# OpenClawAgentLoop：每轮经 proxy 的模型调用上限（与 veRL multi_turn.max_assistant_turns 独立）
+export MAX_TURNS="${MAX_TURNS:-10}"
+
 # ── 环境变量检查 ──
 echo "=============================="
 echo "  veRL Online RL (REINFORCE++ + LoRA)"
@@ -125,6 +128,7 @@ echo "  LoRA rank: ${LORA_RANK}"
 echo "  GPU 数: ${N_GPUS}"
 echo "  Batch size: ${BATCH_SIZE}"
 echo "  Reward mode: ${REWARD_MODE}"
+echo "  MAX_TURNS: ${MAX_TURNS}  (OpenClaw rollout; 覆盖: export MAX_TURNS=N)"
 echo "  OpenClaw host: ${OPENCLAW_HOST:-localhost}"
 echo "  OpenClaw remote activate: ${OPENCLAW_REMOTE_ACTIVATE_CMD:-<none>}"
 echo "  Judge model: ${JUDGE_MODEL:-qwen-plus}"

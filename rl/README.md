@@ -11,6 +11,8 @@ PinchBench 的每个 task 对应一个真实用户请求场景：
 - **grading 函数 = terminal reward**：automated 类型有确定性 0/1 信号
 - **workspace 隔离**：每次执行独立，无副作用
 
+与 **`scripts/benchmark.py` 评测对比**时，请让 OpenClaw 侧的 **`MAX_TURNS`** 与训练一致（见 `rl/train/run_reinforce_lora.sh`，默认 **10**）。Benchmark 以任务 `timeout_seconds` 控制 wall-clock；RL 里 `OpenClawAgentLoop` 还会用 `MAX_TURNS` 限制经 proxy 的模型轮数，两者不一致会导致训/测不可比。
+
 ```
 task prompt（用户请求）
     → openclaw + Qwen3-4B 执行一次

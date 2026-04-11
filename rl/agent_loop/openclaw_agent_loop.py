@@ -12,7 +12,8 @@ Architecture:
 
 Environment variables:
   OPENCLAW_HOST, OPENCLAW_USER, OPENCLAW_SSH_KEY, OPENCLAW_PORT,
-  OPENCLAW_WORKSPACE, PINCHBENCH_DIR, REWARD_MODE,
+  OPENCLAW_WORKSPACE, MAX_TURNS (default 10; proxy-side model rounds per episode),
+  PINCHBENCH_DIR, REWARD_MODE,
   PRM_VLLM_BASE_URL, PRM_MODEL, PRM_API_KEY,
   OPENCLAW_WEB_SEARCH_SKILLS, OPENCLAW_WEB_FETCH_SKILLS
 
@@ -94,7 +95,7 @@ class OpenClawConfig:
     reward_mode: str = "self-judge"
     proxy_bind_host: str = "0.0.0.0"
     agent_timeout: float = 240.0
-    max_turns: int = 5
+    max_turns: int = 10
     # turn>0 且 OpenClaw 请求 messages<=2 连续达到此次数则判为卡死；0=关闭该检测
     stuck_retry_threshold: int = 2
     prm_vllm_base_url: str = "http://localhost:9090/v1"
@@ -117,7 +118,7 @@ class OpenClawConfig:
             reward_mode=os.environ.get("REWARD_MODE", "self-judge"),
             proxy_bind_host=os.environ.get("PROXY_BIND_HOST", "0.0.0.0"),
             agent_timeout=float(os.environ.get("AGENT_TIMEOUT", "240")),
-            max_turns=int(os.environ.get("MAX_TURNS", "5")),
+            max_turns=int(os.environ.get("MAX_TURNS", "10")),
             stuck_retry_threshold=int(os.environ.get("OPENCLAW_STUCK_RETRY_THRESHOLD", "2")),
             prm_vllm_base_url=os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:9090/v1"),
             prm_model=os.environ.get("PRM_MODEL", "Qwen/Qwen3-4B"),
@@ -743,9 +744,11 @@ class OpenClawAgentLoop(AgentLoopBase):
         """Write task `workspace_files` onto ECS before OpenClaw runs.
 
         Local mode calls `_prepare_workspace` on the training host; remote mode
-        only had `mkdir -p` on ECS, so inbox assets from task YAML were missing
-        (e.g. email_13.txt for task_16_email_triage). Seed a temp tree locally and
-        rsync it to the remote workspace.
+        seeds a temp tree locally and rsyncs it to the remote workspace.
+
+        Tasks with empty ``workspace_files`` still get ``rm -rf <workspace> &&
+        mkdir -p`` on ECS each episode so outputs (e.g. ``stock_report.txt``) do
+        not linger across rollouts — aligned with benchmark ``prepare_task_workspace``.
         """
         if not self.oc_config.pinchbench_dir:
             return
@@ -756,14 +759,6 @@ class OpenClawAgentLoop(AgentLoopBase):
                 if not local_root.is_dir():
                     return
                 has_files = any(p.is_file() for p in local_root.rglob("*"))
-                if not has_files:
-                    # Normal for tasks with workspace_files: [] (e.g. task_02_stock — agent creates
-                    # stock_report.txt). ECS workspace dir is still created by remote openclaw setup.
-                    logger.debug(
-                        "Remote workspace: no files to rsync for %s (task has empty workspace_files); OK",
-                        task_id,
-                    )
-                    return
                 ws = shlex.quote(workspace)
                 reset = subprocess.run(
                     [
@@ -783,6 +778,13 @@ class OpenClawAgentLoop(AgentLoopBase):
                     logger.error(
                         "Remote workspace reset failed for %s: %s %s",
                         task_id, reset.stderr, reset.stdout,
+                    )
+                    return
+                if not has_files:
+                    logger.info(
+                        "Remote workspace reset (empty seed / no workspace_files) for %s -> %s",
+                        task_id,
+                        workspace,
                     )
                     return
                 rsync_cmd = [

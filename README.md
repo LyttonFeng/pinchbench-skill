@@ -44,6 +44,8 @@ cd skill
 - [uv](https://docs.astral.sh/uv/) package manager
 - A running OpenClaw instance
 
+**Comparing benchmark runs to RL (this repo):** If you line up `scripts/benchmark.py` scores with veRL rollouts using `OpenClawAgentLoop`, configure OpenClaw so **`MAX_TURNS`** matches training (`rl/train/run_reinforce_lora.sh` defaults to **10**). Tasks still use wall-clock timeouts for the agent process; `MAX_TURNS` only caps proxy-side model rounds during RL, and a mismatch will skew train-vs-eval comparisons.
+
 ## What Gets Tested
 
 PinchBench includes 23 tasks across real-world categories:
