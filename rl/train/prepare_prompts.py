@@ -1,6 +1,10 @@
 """
 Prepare PinchBench task prompts as veRL parquet dataset for Online RL.
 
+Rubric text (goal, optional_hints, common_mistakes, reference_steps) lives in
+``rl/agent_loop/reward.py`` (TASK_RUBRICS), not in this parquet — regenerate
+parquet when ``tasks/*.md`` prompts change so train/benchmark prompts stay aligned.
+
 For Online RL, we only need task prompts (not pre-collected trajectories).
 veRL's agent loop will generate new trajectories using the current policy.
 
