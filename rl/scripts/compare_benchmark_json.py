@@ -19,7 +19,7 @@ RL_TRAIN_8 = frozenset(
         "task_10_workflow",
         "task_12_skill_search",
         "task_16_email_triage",
-        "task_16_market_research",
+        "task_18_market_research",
         "task_18_spreadsheet_summary",
         "task_22_second_brain",
         "task_24_polymarket_briefing",

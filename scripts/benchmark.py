@@ -53,6 +53,28 @@ logging.basicConfig(
 logger = logging.getLogger("benchmark")
 
 
+def _apply_env_file(path: Path) -> None:
+    """Load ``KEY=value`` or ``export KEY=value`` into :data:`os.environ` if the key is unset."""
+    try:
+        if not path.is_file():
+            return
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except OSError:
+        pass
+
+
 class OpenClawAgent:
     """Scaffold for OpenClaw agent creation and execution."""
 
@@ -541,6 +563,8 @@ def main():
     # Determine tasks directory
     script_dir = Path(__file__).parent
     skill_root = script_dir.parent  # Parent of scripts/ is the skill root
+    _apply_env_file(Path.home() / ".pinchbench_env")
+    _apply_env_file(skill_root / ".env")
     tasks_dir = skill_root / "tasks"
 
     logger.info("🦞🦀🦐 PinchBench - OpenClaw Benchmarking")

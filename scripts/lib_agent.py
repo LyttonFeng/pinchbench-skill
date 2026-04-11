@@ -23,6 +23,19 @@ logger = logging.getLogger(__name__)
 USE_SHELL = platform.system() == "Windows"
 
 
+def _openclaw_catalog_model_id(model_id: str) -> str:
+    """Map HuggingFace-style ids (e.g. Qwen/Qwen3-4B) to a single catalog name for OpenClaw.
+
+    OpenClaw treats ``/`` in the model field as ``provider/model``. A defaultModel of
+    ``Qwen/Qwen3-4B`` becomes ``qwen/Qwen3-4B`` and does not match the ``custom`` provider.
+    vLLM ``--served-model-name`` also registers the basename (Qwen3-4B).
+    """
+    s = model_id.strip()
+    if "/" in s:
+        return s.rsplit("/", 1)[-1]
+    return s
+
+
 def _patch_openclaw_agent_disable_model_fallbacks(agent_id: str, model_id: str) -> None:
     """OpenClaw merges global `agents.defaults.model` fallbacks when the agent's model is a plain string.
 
@@ -56,7 +69,8 @@ def _patch_openclaw_agent_disable_model_fallbacks(agent_id: str, model_id: str) 
             continue
         if eid != agent_id and eid.lower() != normalized:
             continue
-        entry["model"] = {"primary": model_id, "fallbacks": []}
+        mid = _openclaw_catalog_model_id(model_id)
+        entry["model"] = {"primary": f"custom/{mid}", "fallbacks": []}
         updated = True
         break
     if not updated:
@@ -366,33 +380,35 @@ def ensure_agent_exists(
     if base_url:
         # Custom OpenAI-compatible endpoint — build a provider entry
         key_ref = api_key if api_key else "dummy"
-        data: dict[str, Any] = {
-            "providers": {
-                "custom": {
-                    "baseUrl": base_url,
-                    "apiKey": key_ref,
-                    "api": "openai-completions",
-                    "models": [
-                        {
-                            "id": model_id,
-                            "name": model_id,
-                            "reasoning": False,
-                            "input": ["text"],
-                            "contextWindow": 32768,
-                            "maxTokens": 8192,
-                        }
-                    ],
+        mid = _openclaw_catalog_model_id(model_id)
+        custom_provider: dict[str, Any] = {
+            "baseUrl": base_url,
+            # pi-coding-agent (OpenClaw's embedded registry) requires a non-empty apiKey whenever
+            # custom models are defined; omitting it invalidates models.json and yields Unknown model.
+            # vLLM accepts Bearer dummy; OpenClaw resolves this literal key for HTTP (see model-auth.ts).
+            "apiKey": key_ref,
+            "api": "openai-completions",
+            "models": [
+                {
+                    "id": mid,
+                    "name": mid,
+                    "reasoning": False,
+                    "input": ["text"],
+                    "contextWindow": 32768,
+                    "maxTokens": 8192,
                 }
-            },
+            ],
+        }
+        data: dict[str, Any] = {
+            "providers": {"custom": custom_provider},
             "defaultProvider": "custom",
-            "defaultModel": model_id,
+            "defaultModel": mid,
         }
         bench_models.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
-        # openclaw may overwrite models.json asynchronously after agent creation;
-        # re-write after a short delay to ensure our config wins
+        # OpenClaw may merge global providers into models.json and strip defaultProvider/defaultModel.
         import time as _time
         _time.sleep(2)
-        bench_models.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        _repair_bench_models_json_defaults(agent_id, model_id)
         logger.info(
             "Configured custom provider (%s) with model %s for agent %s",
             base_url,
@@ -432,8 +448,109 @@ def ensure_agent_exists(
             logger.warning("Failed to delete sessions.json: %s", exc)
 
     _patch_openclaw_agent_disable_model_fallbacks(agent_id, model_id)
+    if base_url:
+        _ensure_bench_auth_custom_profile(agent_id)
 
     return True
+
+
+def _ensure_bench_auth_custom_profile(agent_id: str) -> None:
+    """OpenClaw resolves API keys for the ``custom`` provider via auth-profiles.json under the agent dir.
+
+    models.json ``apiKey`` alone is not enough for the embedded agent runtime; without a profile, requests fail with
+    ``No API key found for provider \"custom\"`` even when vLLM accepts ``Bearer dummy``.
+    """
+    bench_models = _get_agent_store_dir(agent_id) / "agent" / "models.json"
+    if not bench_models.is_file():
+        return
+    try:
+        data = json.loads(bench_models.read_text("utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        return
+    custom = providers.get("custom")
+    if not isinstance(custom, dict):
+        return
+    key = str(custom.get("apiKey", "")).strip() or "dummy"
+    auth_path = _get_agent_store_dir(agent_id) / "agent" / "auth-profiles.json"
+    try:
+        if auth_path.is_file():
+            store = json.loads(auth_path.read_text("utf-8-sig"))
+        else:
+            store = {"version": 1, "profiles": {}}
+    except (OSError, json.JSONDecodeError):
+        store = {"version": 1, "profiles": {}}
+    profiles = store.setdefault("profiles", {})
+    profile_id = "pinchbench-custom"
+    want = {"type": "api_key", "provider": "custom", "key": key}
+    if profiles.get(profile_id) == want:
+        return
+    profiles[profile_id] = want
+    order = store.setdefault("order", {})
+    order["custom"] = [profile_id]
+    try:
+        auth_path.write_text(json.dumps(store, indent=2, ensure_ascii=False) + "\n", "utf-8")
+        logger.info(
+            "Wrote auth-profiles.json for agent %s (custom / %s)",
+            agent_id,
+            profile_id,
+        )
+    except OSError as exc:
+        logger.warning("Failed to write auth-profiles.json for %s: %s", agent_id, exc)
+
+
+def _repair_bench_models_json_defaults(agent_id: str, model_id: str) -> None:
+    """OpenClaw may merge global providers into the bench agent's models.json and drop defaultProvider/defaultModel.
+
+    Without those keys, the runtime fails model resolution, so no transcript jsonl is written.
+    Catalog ids must use :func:`_openclaw_catalog_model_id` (no ``/``) so ``custom`` is not confused with ``qwen``.
+    """
+    bench_models = _get_agent_store_dir(agent_id) / "agent" / "models.json"
+    if not bench_models.is_file():
+        return
+    try:
+        raw = bench_models.read_text("utf-8-sig")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not read models.json for repair (%s): %s", bench_models, exc)
+        return
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        return
+    custom = providers.get("custom")
+    if not isinstance(custom, dict) or not str(custom.get("baseUrl", "")).strip():
+        return
+    mid = _openclaw_catalog_model_id(model_id)
+    changed = False
+    if not str(custom.get("apiKey", "")).strip():
+        custom["apiKey"] = "dummy"
+        changed = True
+    if data.get("defaultProvider") != "custom":
+        data["defaultProvider"] = "custom"
+        changed = True
+    if data.get("defaultModel") != mid:
+        data["defaultModel"] = mid
+        changed = True
+    models_list = custom.get("models")
+    if isinstance(models_list, list) and models_list and isinstance(models_list[0], dict):
+        m0 = models_list[0]
+        if m0.get("id") != mid or m0.get("name") != mid:
+            m0["id"] = mid
+            m0["name"] = mid
+            changed = True
+    if changed:
+        try:
+            bench_models.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+            logger.info(
+                "Repaired models.json defaultProvider/defaultModel for agent %s → custom / %s",
+                agent_id,
+                mid,
+            )
+        except OSError as exc:
+            logger.warning("Failed to write repaired models.json: %s", exc)
+    _ensure_bench_auth_custom_profile(agent_id)
 
 
 def cleanup_agent_sessions(agent_id: str) -> None:
@@ -460,6 +577,22 @@ def cleanup_agent_sessions(agent_id: str) -> None:
         logger.info("Removed %s old OpenClaw session transcripts for %s", removed, agent_id)
 
 
+def _pinchbench_agent_workspace_for_run(run_id: str) -> Path | None:
+    """Resolve ``/tmp/pinchbench/<run>/agent_workspace`` from benchmark ``run_id``.
+
+    ``execute_openclaw_task`` receives ``run_id`` like ``\"0029-1\"``; :func:`ensure_agent_exists`
+    pins the OpenClaw agent to ``/tmp/pinchbench/0029/agent_workspace``. Grading must use that same
+    path. Parsing ``openclaw agents list`` can return a *stale* workspace from an older run, so
+    automated graders then see no files and score 0 despite a valid transcript.
+    """
+    if not run_id:
+        return None
+    head = str(run_id).split("-", 1)[0].strip()
+    if not head.isdigit():
+        return None
+    return Path(f"/tmp/pinchbench/{head}/agent_workspace")
+
+
 def prepare_task_workspace(skill_dir: Path, run_id: str, task: Task, agent_id: str) -> Path:
     """
     Prepare workspace for a task by copying fixtures.
@@ -467,12 +600,15 @@ def prepare_task_workspace(skill_dir: Path, run_id: str, task: Task, agent_id: s
     """
     import shutil
 
-    # Get agent's workspace from agent config
-    workspace = _get_agent_workspace(agent_id)
+    # Prefer PinchBench run layout (must match ensure_agent_exists / openclaw agent workspace).
+    workspace = _pinchbench_agent_workspace_for_run(run_id)
+    if workspace is None:
+        workspace = _get_agent_workspace(agent_id)
     if workspace is None:
         # Fallback to task-specific workspace if agent workspace not found
         logger.warning("Could not find agent workspace, using fallback")
-        workspace = Path(f"/tmp/pinchbench/{run_id}/{task.task_id}")
+        rid = str(run_id).split("-", 1)[0] if run_id else ""
+        workspace = Path(f"/tmp/pinchbench/{rid or run_id}/{task.task_id}")
 
     _BOOTSTRAP_FILES = ["SOUL.md", "BOOTSTRAP.md", "USER.md", "IDENTITY.md", "HEARTBEAT.md", "TOOLS.md"]
 
@@ -800,6 +936,7 @@ def execute_openclaw_task(
     # Clean up previous session transcripts so we can reliably find this task's
     # transcript (OpenClaw uses its own UUID-based naming, not our session ID).
     cleanup_agent_sessions(agent_id)
+    _repair_bench_models_json_defaults(agent_id, model_id)
 
     start_time = time.time()
     workspace = prepare_task_workspace(skill_dir, run_id, task, agent_id)
@@ -1112,6 +1249,7 @@ def call_judge_api(
     timeout_seconds: float = 120.0,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    response_json: bool = False,
 ) -> Dict[str, Any]:
     """Call a judge model directly via API, bypassing OpenClaw.
 
@@ -1126,11 +1264,18 @@ def call_judge_api(
     """
     # Custom endpoint takes priority over prefix-based dispatch
     if base_url:
-        resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        resolved_key = (
+            api_key
+            or os.environ.get("DASHSCOPE_API_KEY")
+            or os.environ.get("PINCHBENCH_GRADE_JUDGE_API_KEY")
+            or os.environ.get("OPENAI_API_KEY", "")
+        )
         if not resolved_key:
             return {"status": "error", "text": "", "error": "No API key provided for custom judge endpoint"}
         endpoint = base_url.rstrip("/") + "/chat/completions"
-        return _judge_via_openai_compat(prompt, model, endpoint, resolved_key, timeout_seconds)
+        return _judge_via_openai_compat(
+            prompt, model, endpoint, resolved_key, timeout_seconds, response_json=response_json
+        )
     if model == "claude" or model.startswith("claude:"):
         return _judge_via_claude_cli(prompt, model, timeout_seconds)
     if model.startswith("anthropic/"):
@@ -1148,9 +1293,11 @@ def _judge_via_openai_compat(
     api_key: str,
     timeout_seconds: float,
     extra_headers: Optional[Dict[str, str]] = None,
+    *,
+    response_json: bool = False,
 ) -> Dict[str, Any]:
     """Shared implementation for OpenAI-compatible chat completions APIs."""
-    payload = json.dumps({
+    body: Dict[str, Any] = {
         "model": api_model,
         "messages": [
             {"role": "system", "content": _JUDGE_SYSTEM_MSG},
@@ -1158,7 +1305,10 @@ def _judge_via_openai_compat(
         ],
         "temperature": 0.0,
         "max_tokens": 2048,
-    }).encode("utf-8")
+    }
+    if response_json:
+        body["response_format"] = {"type": "json_object"}
+    payload = json.dumps(body).encode("utf-8")
 
     headers = {
         "Authorization": f"Bearer {api_key}",

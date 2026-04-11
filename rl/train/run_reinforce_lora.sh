@@ -22,7 +22,7 @@
 #   # 或（推荐 RunPod/tmux）：echo 'export DASHSCOPE_API_KEY=sk-xxx' > ~/.pinchbench_env && chmod 600 ~/.pinchbench_env
 #   export REWARD_MODE=oracle               # ablation mode
 #
-#   # Step 3: 启动训练
+#   # Step 3: 启动训练（脚本内会预检：train.parquet、训推 prompt 一致性、DashScope judge、ECS OpenClaw 等）
 #   bash rl/train/run_reinforce_lora.sh
 #
 # 依赖：pip install verl vllm transformers peft aiohttp
@@ -147,6 +147,21 @@ if [ ! -f "${TRAIN_FILE}" ]; then
     echo "训练数据不存在: ${TRAIN_FILE}"
     echo "请先运行: python rl/train/prepare_prompts.py"
     exit 1
+fi
+
+# 训推一致性：8 个 RL 任务在 tasks/*.md 中的 ## Prompt 必须与 benchmark TaskLoader 解析一致
+# （与 prepare_prompts.py 抽取逻辑对齐；失败则不要开训）
+if [ "${PINCHBENCH_SKIP_TRAIN_INFER_PARITY:-0}" != "1" ]; then
+    echo "Preflight: train vs benchmark prompt parity (rl/scripts/check_train_infer_parity.py)..."
+    if ! python3 "${REPO_ROOT}/rl/scripts/check_train_infer_parity.py"; then
+        echo "ERROR: train/infer parity check failed. Fix tasks/ or scripts/lib_tasks.py, then re-run."
+        echo "  手动复现: python3 rl/scripts/check_train_infer_parity.py"
+        echo "  跳过（不推荐）: PINCHBENCH_SKIP_TRAIN_INFER_PARITY=1"
+        exit 1
+    fi
+    echo "  train/infer parity OK"
+else
+    echo "WARN: skipping train/infer parity (PINCHBENCH_SKIP_TRAIN_INFER_PARITY=1)"
 fi
 
 # 设置环境变量供 agent loop 和 reward manager 使用

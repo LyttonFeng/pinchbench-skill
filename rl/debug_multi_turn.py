@@ -105,7 +105,12 @@ def prepare_messages(messages, tools):
             msg["content"] = "\n".join(parts)
         out.append(msg)
 
-    if tools:
+    if tools and os.environ.get("PINCHBENCH_RL_INJECT_TOOL_FORMAT_SUFFIX", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
         TOOL_FORMAT_SUFFIX = (
             "\n\n# Output Format for Tool Calls\n"
             "When you need to call a tool, output the call inside <tool_call></tool_call> XML tags:\n"

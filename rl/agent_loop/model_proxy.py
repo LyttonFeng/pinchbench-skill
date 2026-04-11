@@ -13,6 +13,7 @@ Based on veRL's SWE-Agent recipe ModelProxy pattern.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import time
@@ -21,8 +22,18 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from aiohttp import web
+from aiohttp.client_exceptions import ClientConnectionResetError
 
 logger = logging.getLogger(__name__)
+
+
+def _is_client_disconnect(exc: BaseException) -> bool:
+    """True when the HTTP peer closed the connection (tunnel timeout, agent cancel, etc.)."""
+    if isinstance(exc, (ClientConnectionResetError, ConnectionResetError, BrokenPipeError)):
+        return True
+    if isinstance(exc, OSError) and exc.errno in (errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED):
+        return True
+    return False
 
 
 @dataclass
@@ -181,7 +192,7 @@ class ModelProxy:
 
     async def _stream_response(
         self, http_request: web.Request, req: ModelRequest, model: str,
-    ) -> web.StreamResponse:
+    ) -> web.Response:
         """Return an SSE stream matching the OpenAI chat.completions streaming format.
 
         Follows the exact OpenAI streaming spec:
@@ -198,7 +209,6 @@ class ModelProxy:
                 "X-Accel-Buffering": "no",
             },
         )
-        await resp.prepare(http_request)
 
         created = int(time.time())
         has_tool_calls = bool(req.response_tool_calls)
@@ -218,36 +228,56 @@ class ModelProxy:
             }
             return c
 
-        # Chunk 1: role
-        await _send(_chunk({"role": "assistant"}))
+        try:
+            await resp.prepare(http_request)
 
-        if has_tool_calls:
-            for i, tc in enumerate(req.response_tool_calls):
-                func = tc.get("function", {})
-                args_str = func.get("arguments", "{}")
-                # Send each tool call as a single chunk with all fields.
-                # OpenClaw's streaming parser starts a new toolCall block
-                # when it sees a chunk with an id.
-                await _send(_chunk({"tool_calls": [{
-                    "index": i,
-                    "id": tc.get("id", f"call_{i}"),
-                    "type": "function",
-                    "function": {
-                        "name": func.get("name", ""),
-                        "arguments": args_str,
-                    },
-                }]}))
+            # Chunk 1: role
+            await _send(_chunk({"role": "assistant"}))
 
-            await _send(_chunk({}, finish_reason="tool_calls"))
-        else:
-            content = req.response_text or ""
-            if content:
-                await _send(_chunk({"content": content}))
-            await _send(_chunk({}, finish_reason="stop"))
+            if has_tool_calls:
+                for i, tc in enumerate(req.response_tool_calls):
+                    func = tc.get("function", {})
+                    args_str = func.get("arguments", "{}")
+                    # Send each tool call as a single chunk with all fields.
+                    # OpenClaw's streaming parser starts a new toolCall block
+                    # when it sees a chunk with an id.
+                    await _send(_chunk({"tool_calls": [{
+                        "index": i,
+                        "id": tc.get("id", f"call_{i}"),
+                        "type": "function",
+                        "function": {
+                            "name": func.get("name", ""),
+                            "arguments": args_str,
+                        },
+                    }]}))
 
-        await resp.write(b"data: [DONE]\n\n")
-        await resp.write_eof()
-        return resp
+                await _send(_chunk({}, finish_reason="tool_calls"))
+            else:
+                content = req.response_text or ""
+                if content:
+                    await _send(_chunk({"content": content}))
+                await _send(_chunk({}, finish_reason="stop"))
+
+            await resp.write(b"data: [DONE]\n\n")
+            await resp.write_eof()
+            return resp
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:
+            if not _is_client_disconnect(e):
+                raise
+            logger.warning(
+                "SSE peer disconnected before stream finished (request_id=%s): %s",
+                req.request_id, e,
+            )
+            if getattr(resp, "prepared", False):
+                try:
+                    await resp.write_eof()
+                except BaseException:
+                    pass
+                return resp
+            # prepare() failed (e.g. client gone before headers sent)
+            return web.Response(status=499, text="Client Closed Request")
 
     async def _handle_list_models(self, request: web.Request) -> web.Response:
         return web.json_response({

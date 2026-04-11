@@ -15,6 +15,11 @@ Environment variables:
   OPENCLAW_WORKSPACE, PINCHBENCH_DIR, REWARD_MODE,
   PRM_VLLM_BASE_URL, PRM_MODEL, PRM_API_KEY,
   OPENCLAW_WEB_SEARCH_SKILLS, OPENCLAW_WEB_FETCH_SKILLS
+
+  PINCHBENCH_RL_INJECT_TOOL_FORMAT_SUFFIX — Set to 1/true to append the legacy
+  ``<tool_call>`` XML instructions to the first system message (training-only shim).
+  **Default: unset/false** so rollout matches PinchBench/OpenClaw → vLLM (no extra
+  system suffix), consistent with benchmark inference.
 """
 
 from __future__ import annotations
@@ -752,7 +757,12 @@ class OpenClawAgentLoop(AgentLoopBase):
                     return
                 has_files = any(p.is_file() for p in local_root.rglob("*"))
                 if not has_files:
-                    logger.debug("Remote workspace seed skipped (no files) for %s", task_id)
+                    # Normal for tasks with workspace_files: [] (e.g. task_02_stock — agent creates
+                    # stock_report.txt). ECS workspace dir is still created by remote openclaw setup.
+                    logger.debug(
+                        "Remote workspace: no files to rsync for %s (task has empty workspace_files); OK",
+                        task_id,
+                    )
                     return
                 ws = shlex.quote(workspace)
                 reset = subprocess.run(
@@ -1008,7 +1018,14 @@ class OpenClawAgentLoop(AgentLoopBase):
                 msg["content"] = "\n".join(parts)
             out.append(msg)
 
-        if tools:
+        # Default OFF: PinchBench benchmark uses OpenClaw → vLLM without this shim.
+        # Opt-in for old experiments: PINCHBENCH_RL_INJECT_TOOL_FORMAT_SUFFIX=1
+        if tools and os.environ.get("PINCHBENCH_RL_INJECT_TOOL_FORMAT_SUFFIX", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
             TOOL_FORMAT_SUFFIX = (
                 "\n\n# Output Format for Tool Calls\n"
                 "When you need to call a tool, output the call inside <tool_call></tool_call> XML tags:\n"

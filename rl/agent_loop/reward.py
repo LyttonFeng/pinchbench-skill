@@ -4,13 +4,16 @@ Process reward + terminal reward computation for PinchBench RL.
 Four ablation modes:
   Mode A (baseline):    per-turn reward = 0, last turn gets terminal_reward
   Mode B (rule-only):   per-turn reward from generic behavior rules (fast, no LLM)
-  Mode C (self-judge):  Qwen3-4B self-judge with rubric + reference trajectory
+  Mode C (self-judge):  Qwen3-4B self-judge with goal + optional hints + common mistakes
   Mode D (oracle-judge): qwen-plus judge (fallback if self-judge is unreliable)
 
 Default mode: C (self-judge) — 自进化：模型自己评判自己
 
 Terminal reward: {-1, +1}  (task fail / succeed)
 Process reward:  [-0.5, +0.3] per turn
+
+PRM (self-judge) uses task goal + optional_hints (non-binding) + common_mistakes.
+reference_steps in TASK_RUBRICS is for Mode B rule rewards only, not verbatim PRM text.
 """
 
 from __future__ import annotations
@@ -30,12 +33,30 @@ if not logger.handlers:
 
 
 # ══════════════════════════════════════════════════════════════
-#  Per-task PRM rubrics (reference trajectories + scoring guide)
+#  Per-task PRM rubrics (goal + optional_hints for PRM; reference_steps for Mode B rules)
 # ══════════════════════════════════════════════════════════════
+
+_TASK_OPTIONAL_HINTS_DEFAULT = (
+    "Typical agents gather context, take actions, and verify; many valid tool orders and strategies "
+    "can satisfy the task goal."
+)
+
+
+def _optional_hints_for_prm(rubric: dict[str, Any]) -> str:
+    """Short non-binding hints for self-judge PRM only (Mode B still uses reference_steps)."""
+    h = rubric.get("optional_hints")
+    if isinstance(h, str) and h.strip():
+        return h.strip()
+    return _TASK_OPTIONAL_HINTS_DEFAULT
+
 
 TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_02_stock": {
         "goal": "Research Apple (AAPL) stock price, save to stock_report.txt including the literal ticker AAPL, price, date, and market summary (PinchBench automated grading requires the substring AAPL in the file).",
+        "optional_hints": (
+            "Often: search the web for AAPL, optionally fetch a page for detail, then write stock_report.txt "
+            "with ticker, price, date, and summary. Order can vary if the file is grounded and meets graders."
+        ),
         "reference_steps": [
             "1. web_search: search for AAPL/Apple stock price",
             "2. web_fetch or additional web_search: get detailed data (may retry different sources)",
@@ -51,53 +72,68 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "qwen_plus_stats": "7 turns, 6 tool calls, 745 bytes output",
     },
     "task_12_skill_search": {
-        "goal": "Find and replace specific values in config files (settings.json and database.yml).",
+        "goal": "Update config/settings.json and config/database.yml per prompt: localhost→prod-db.example.com, myapp_dev/myapp_test→myapp_prod, log debug→warn, API URL to https://api.example.com. Automated grader checks file contents.",
+        "optional_hints": (
+            "Typically: list/read config files, apply every required substitution in both JSON and YAML, "
+            "then verify. Different edit tools or read order are fine if final files match the task."
+        ),
         "reference_steps": [
-            "1. exec ls or read: examine directory structure and file contents",
-            "2. read: read each config file to understand current values",
-            "3. edit: precisely replace target values (NOT blind sed)",
-            "4. read: verify the modifications were applied correctly",
+            "1. read or exec: list config/ and read both files",
+            "2. Use OpenClaw edit tool (or careful search_replace) — avoid blind sed without reading",
+            "3. Apply all replacement rules across JSON and YAML",
+            "4. read: verify replacements; summarize changes",
         ],
         "common_mistakes": [
-            "Using sed -i without reading the file first (blind replacement)",
-            "Repeating the same failing sed command multiple times",
-            "Not verifying changes after editing",
-            "Using sed on macOS without -i '' (syntax error)",
+            "Running sed -i without reading targets first (blind replacement)",
+            "Repeating the same failing exec/sed instead of switching to edit",
+            "Missing one file or one replacement class (localhost, DB name, log level, API URL)",
+            "Not verifying with read after edits",
         ],
         "qwen_plus_stats": "9 turns, 8 tool calls. Used edit with expanded context for ambiguous matches.",
     },
     "task_10_workflow": {
-        "goal": "Read config.json, extract API endpoint, create a Python script to call it, document in NOTES.md.",
+        "goal": "Read workspace config.json, extract API endpoint, write a Python script that calls it, document in NOTES.md (same as PinchBench task; hybrid grader checks script + notes quality).",
+        "optional_hints": (
+            "Usually: read config.json before coding, then produce script + NOTES. Iteration is normal; "
+            "the grader penalizes hardcoding the URL without using the config."
+        ),
         "reference_steps": [
             "1. read: read config.json to extract endpoint and settings",
-            "2. Analyze: identify endpoint (api.example.com), method, headers",
-            "3. write: create Python script with requests, json, error handling",
-            "4. write: create NOTES.md documenting the workflow",
+            "2. Plan: identify endpoint URL, method, headers from JSON",
+            "3. write: Python script with requests (or urllib), error handling, uses endpoint from config",
+            "4. write: NOTES.md explaining setup and how to run the script",
         ],
         "common_mistakes": [
-            "Writing the Python script without reading config.json first",
-            "Python script missing error handling (no try/except)",
-            "NOTES.md too brief (less than 500 bytes)",
+            "Hardcoding the URL instead of reading config.json (still common; judge penalizes)",
+            "Script without basic error handling",
+            "Missing NOTES.md or notes that omit what was done",
         ],
         "qwen_plus_stats": "4 turns, 3 tool calls. Python: 1704 bytes, NOTES: 1389 bytes.",
     },
     "task_22_second_brain": {
-        "goal": "Create and organize knowledge notes with cross-references and structured format.",
+        "goal": "Multi-session task (OpenClaw sessions in frontmatter): Session 1 — write user facts to memory/MEMORY.md (Rust, Jan 15 2024, Dr. Elena Vasquez, NeonDB, secret phrase). Session 2 — answer language + project from file. Session 3 (new session) — read MEMORY.md and answer all 5 recall questions. Matches PinchBench hybrid grader.",
+        "optional_hints": (
+            "Three OpenClaw sessions: persist facts to memory/MEMORY.md, answer short questions, then in a "
+            "new session read the file and answer five recall items. Wording inside a session may vary."
+        ),
         "reference_steps": [
-            "1. read/exec: examine existing note structure",
-            "2. read: read existing note content to understand context",
-            "3. write: create new notes with structured format (headers, lists, links)",
-            "4. write: update index or create cross-references between notes",
+            "1. Session 1: write memory/MEMORY.md with required facts; confirm save",
+            "2. Session 2: answer Rust + NeonDB (read file if needed)",
+            "3. Session 3: read MEMORY.md; answer 5 questions accurately (language, date, mentor, project description, code phrase)",
         ],
         "common_mistakes": [
-            "Writing notes without reading existing content first",
-            "Notes lacking structure (no headers, lists, or links)",
-            "Only creating one file without cross-references",
+            "Wrong path (must be memory/MEMORY.md under workspace)",
+            "Session 3 not reading file and hallucinating answers",
+            "Omitting one of the five recall items",
         ],
-        "qwen_plus_stats": "7 turns, 4 tool calls.",
+        "qwen_plus_stats": "Multi-session; ~3 OpenClaw session invocations per benchmark run.",
     },
     "task_16_email_triage": {
         "goal": "Read all 13 files in inbox/ (email_01.txt … email_13.txt), then write triage_report.md: top summary + day plan; for each email assign Priority P0–P4, Category (incident/client/internal-request/administrative/code-review/automated/newsletter/spam), and recommended action; sort entries by priority (most urgent first). PinchBench checks: production outage email as P0; monitoring alert tied to same incident; BigClient email P0/P1; promotional/spam email P4; report structure and summary section.",
+        "optional_hints": (
+            "Commonly: read all inbox emails (batch or sequential), then write triage_report.md with a top "
+            "summary and priority-sorted rows. Reading order is not graded; coverage and priorities are."
+        ),
         "reference_steps": [
             "1. read/exec: discover inbox/ and enumerate email_01 … email_13",
             "2. read: open each email file (one or more read calls per email until all 13 understood)",
@@ -117,49 +153,56 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "qwen_plus_stats": "15 turns, 14 tool calls; read each inbox file; triage_report.md with summary then priority-sorted entries.",
     },
     "task_18_spreadsheet_summary": {
-        "goal": "Analyze CSV/XLSX data and write data_summary.md with actual computed values (matches tasks/task_19_spreadsheet_summary.md, id=task_18_spreadsheet_summary).",
+        "goal": "Analyze workspace CSV + XLSX per task, compute real aggregates, write data_summary.md (PinchBench id=task_18_spreadsheet_summary; markdown file may be task_19_spreadsheet_summary.md on disk).",
+        "optional_hints": (
+            "Usually: inspect CSV, run shell/python to extract XLSX numbers, compute aggregates, then write "
+            "data_summary.md. pandas vs awk vs other tools is fine if numbers match command output."
+        ),
         "reference_steps": [
-            "1. read: read CSV file to understand data structure",
-            "2. read: attempt to read XLSX (will get binary)",
-            "3. exec: use awk/python/pandas to compute actual statistics",
-            "4. write: write report referencing real computed values",
+            "1. read: CSV text; XLSX may be binary — use exec (python/awk) not raw paste",
+            "2. exec: compute sums/means/top-N with verifiable commands",
+            "3. write: data_summary.md with numbers that match exec output",
         ],
         "common_mistakes": [
-            "Reading XLSX binary and writing report without processing the data",
-            "Report contains fabricated numbers not matching exec results",
-            "Not switching strategy when pandas is unavailable (try awk instead)",
+            "Pretending to read .xlsx as UTF-8 text and inventing numbers",
+            "Writing summary without any successful numeric extraction",
+            "Not retrying with another tool when first exec fails",
         ],
         "qwen_plus_stats": "7 turns, 6 tool calls, 1728 bytes. Switched from pandas to awk when needed.",
     },
     "task_18_market_research": {
-        "goal": "Research APM/observability market: overview, competitors, pricing. Write comprehensive report.",
+        "goal": "Write market_research.md: enterprise observability/APM landscape, top ~5 players, differentiators, pricing models, trends; comparison table and analyst-style structure. Use web search if available; else knowledge (per task text).",
+        "optional_hints": (
+            "Often: one or more web searches, then a structured market_research.md. Depth and number of "
+            "searches vary; coverage and analyst-style sections matter more than a fixed recipe."
+        ),
         "reference_steps": [
-            "1. web_search: search market overview (leaders, market size)",
-            "2. web_search: search competitor comparison (Datadog vs Splunk etc.)",
-            "3. web_search: search pricing models",
-            "4. write: write comprehensive report (>5000 bytes) covering all dimensions",
+            "1. web_search (if skills available): market overview, competitors, pricing",
+            "2. Optional additional searches for specificity",
+            "3. write: market_research.md with executive summary, profiles, table, trends",
         ],
         "common_mistakes": [
-            "Only searching once before writing the report",
-            "Using outdated year in search queries (2023 or earlier)",
-            "Report too short (less than 2000 bytes)",
-            "Missing competitor comparison or pricing analysis",
+            "Missing market_research.md or fewer than 5 meaningful competitor sections",
+            "Generic fluff with no pricing or trends",
+            "Search queries with stale years when using web_search",
         ],
         "qwen_plus_stats": "5 turns, 4 tool calls, 8412 bytes. Three search angles: leaders, comparison, pricing.",
     },
     "task_24_polymarket_briefing": {
-        "goal": "Research Polymarket trending markets, search news for each, write briefing with 3 markets.",
+        "goal": "Write polymarket_briefing.md: top 3 trending Polymarket markets (real/active), Yes/No odds, related news within 48h. Task allows gamma API or polymarket.com / web search; do not fabricate markets or odds.",
+        "optional_hints": (
+            "Typically: discover three real trending markets (API or web), pair each with recent news, then "
+            "write the briefing. Do not invent market titles or odds; sources may differ."
+        ),
         "reference_steps": [
-            "1. web_search: search Polymarket trending/popular markets",
-            "2. web_search: search news for specific market topic 1",
-            "3. web_search: search news for specific market topic 2-3",
-            "4. write: write briefing covering 3 markets with sources",
+            "1. web_search or fetch: trending Polymarket markets (or API per task description)",
+            "2. For each of 3 markets: find corroborating recent news",
+            "3. write: polymarket_briefing.md with dated header and 3 sections per template",
         ],
         "common_mistakes": [
-            "Using outdated year in search queries (2023 or earlier)",
-            "Fabricating market probabilities without search evidence",
-            "Not searching for individual market topics (only general search)",
-            "Report missing specific sections for each market (## 1, ## 2, ## 3)",
+            "Hallucinated market names or odds",
+            "News not tied to the market or not recent",
+            "Wrong filename or missing 3 market blocks",
         ],
         "qwen_plus_stats": "8 turns, 7 tool calls, 1719 bytes. Searched trends then each topic individually.",
     },
@@ -168,6 +211,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
 # Generic rubric for unknown tasks
 _GENERIC_RUBRIC = {
     "goal": "Complete the assigned task using appropriate tools.",
+    "optional_hints": _TASK_OPTIONAL_HINTS_DEFAULT,
     "reference_steps": [
         "1. Gather information (read files, search web)",
         "2. Process/analyze the information",
@@ -302,8 +346,8 @@ def build_prm_prompt(
     """Build the PRM scoring prompt for one assistant turn.
 
     The prompt gives the judge:
-      - Task goal and rubric (what success looks like)
-      - Reference trajectory (天眼: how qwen-plus succeeded)
+      - Task goal
+      - Optional hints (illustrative; not a mandatory script)
       - Common mistakes to watch for
       - The agent's previous actions (context)
       - The current turn to evaluate
@@ -339,8 +383,7 @@ def build_prm_prompt(
 
     prev_summary = "\n".join(prev_summary_lines[-20:]) if prev_summary_lines else "  (first turn)"
 
-    # Build reference steps string
-    ref_steps = "\n".join(rubric.get("reference_steps", []))
+    optional_hints = _optional_hints_for_prm(rubric)
 
     # Build common mistakes string
     mistakes = "\n".join(f"- {m}" for m in rubric.get("common_mistakes", []))
@@ -353,8 +396,8 @@ def build_prm_prompt(
 ## Task Goal
 {rubric.get("goal", task_prompt[:500])}
 
-## Reference Path (how a successful agent solves this)
-{ref_steps}
+## Optional Hints (illustrative only — many valid approaches exist)
+{optional_hints}
 
 ## Common Mistakes to Watch For
 {mistakes}
@@ -375,9 +418,9 @@ Agent's text: {content_preview}"""
 ## Scoring Instructions
 Evaluate whether this step moves the agent closer to the goal.
 Consider:
-- Is the agent following the reference path or doing something useful?
+- Is this step useful and appropriate given prior context? (Do **not** treat optional hints as a mandatory script; reward valid alternative strategies.)
 - Is the agent avoiding the common mistakes listed above?
-- Is this step appropriate given what the agent has already done?
+- Is this step coherent with what the agent has already done?
 
 Score range: -0.5 (harmful/wasteful step) to +0.3 (excellent progress)
 - +0.2 to +0.3: Step clearly advances toward the goal (e.g., correct tool with good arguments)

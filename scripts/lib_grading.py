@@ -19,7 +19,11 @@ from lib_tasks import Task
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_JUDGE_MODEL = "openrouter/anthropic/claude-opus-4.5"
+# API judge (default): DashScope compatible OpenAI API — stable JSON with response_format + qwen-plus.
+DEFAULT_JUDGE_MODEL = "qwen-plus"
+DEFAULT_JUDGE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# When falling back to OpenClaw-embedded judge (no DASHSCOPE_API_KEY), use a capable cloud model id.
+DEFAULT_JUDGE_MODEL_OPENCLAW_FALLBACK = "openrouter/anthropic/claude-opus-4.5"
 DEFAULT_JUDGE_AGENT_PREFIX = "bench-judge"
 DEFAULT_JUDGE_TIMEOUT_SECONDS = 180
 
@@ -104,7 +108,7 @@ def grade_task(
 def preflight_judge_connection(
     *,
     judge_model: str = DEFAULT_JUDGE_MODEL,
-    judge_backend: str = "openclaw",
+    judge_backend: str = "api",
     judge_base_url: Optional[str] = None,
     judge_api_key: Optional[str] = None,
     timeout_seconds: float = 30.0,
@@ -134,6 +138,7 @@ def preflight_judge_connection(
         timeout_seconds=timeout_seconds,
         base_url=judge_base_url,
         api_key=judge_api_key,
+        response_json=True,
     )
     if result.get("status") != "success":
         raise RuntimeError(
@@ -147,19 +152,39 @@ def preflight_judge_connection(
 
 def resolve_judge_backend_from_env(
     *,
-    default_model: str = DEFAULT_JUDGE_MODEL,
-    default_backend: str = "openclaw",
+    default_backend: str = "api",
     default_base_url: Optional[str] = None,
     default_api_key: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
-    """Resolve judge settings from env vars used by training/benchmark entrypoints."""
-    model = os.environ.get("PINCHBENCH_GRADE_JUDGE_MODEL", default_model)
+    """Resolve judge settings from env vars used by training/benchmark entrypoints.
+
+    Defaults: DashScope ``qwen-plus`` via compatible-mode API (needs ``DASHSCOPE_API_KEY``).
+    Without a key, falls back to OpenClaw-embedded judge (noisier JSON; use API key in production).
+    """
+    if default_base_url is None:
+        default_base_url = DEFAULT_JUDGE_BASE_URL
     backend = os.environ.get("PINCHBENCH_GRADE_JUDGE_BACKEND", default_backend)
     base_url = os.environ.get("PINCHBENCH_GRADE_JUDGE_BASE_URL", default_base_url)
     api_key = os.environ.get(
         "PINCHBENCH_GRADE_JUDGE_API_KEY",
         os.environ.get("JUDGE_API_KEY", os.environ.get("DASHSCOPE_API_KEY", default_api_key)),
     )
+    if backend == "api" and not (str(api_key or "").strip()):
+        logger.warning(
+            "No DASHSCOPE_API_KEY (or PINCHBENCH_GRADE_JUDGE_API_KEY): "
+            "LLM judge uses OpenClaw embedded agent (%s). Set DASHSCOPE_API_KEY for API judge (qwen-plus).",
+            DEFAULT_JUDGE_MODEL_OPENCLAW_FALLBACK,
+        )
+        backend = "openclaw"
+        base_url = None
+        api_key = None
+
+    if os.environ.get("PINCHBENCH_GRADE_JUDGE_MODEL"):
+        model = os.environ["PINCHBENCH_GRADE_JUDGE_MODEL"]
+    elif backend == "api":
+        model = DEFAULT_JUDGE_MODEL
+    else:
+        model = DEFAULT_JUDGE_MODEL_OPENCLAW_FALLBACK
     return {
         "judge_model": model,
         "judge_backend": backend,
@@ -262,6 +287,7 @@ def _grade_llm_judge(
             timeout_seconds=judge_timeout_seconds,
             base_url=judge_base_url,
             api_key=judge_api_key,
+            response_json=True,
         )
 
         if verbose:

@@ -27,7 +27,8 @@ if str(_REPO_SCRIPTS) not in sys.path:
 from lib_tasks import resolve_task_markdown_path  # noqa: E402
 
 
-# The 8 selected RL training tasks (ids match PinchBench frontmatter `id:` in each task_*.md)
+# The 8 selected RL training tasks (ids match PinchBench frontmatter `id:` in each task_*.md).
+# Train vs benchmark prompt parity: python3 rl/scripts/check_train_infer_parity.py
 DEFAULT_TASK_IDS = [
     "task_02_stock",
     "task_10_workflow",

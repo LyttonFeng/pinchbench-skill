@@ -11,15 +11,16 @@ Set PINCHBENCH_DEBUG_METRICS_PATCH=0 to disable.
 from __future__ import annotations
 
 import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
 
-def apply_patch() -> None:
+def apply_patch() -> object:
     import verl.utils.debug.metrics as m
 
     if getattr(m, "_pinchbench_debug_metrics_patched", False):
-        return
+        return m.calculate_debug_metrics
 
     _orig = m.calculate_debug_metrics
 
@@ -47,7 +48,31 @@ def apply_patch() -> None:
 
     m.calculate_debug_metrics = calculate_debug_metrics_safe
     m._pinchbench_debug_metrics_patched = True
+
+    # Some verl versions import the function into ray_trainer as a local symbol.
+    # Patch that alias too so the trainer sees the safe wrapper instead of the
+    # original function that may still call torch.max(empty).
+    try:
+        import verl.trainer.ppo.ray_trainer as ray_trainer
+
+        ray_trainer.calculate_debug_metrics = calculate_debug_metrics_safe
+    except Exception as e:
+        logger.debug("[pinchbench] ray_trainer alias patch skipped: %s", e)
+
+    for module_name in ("verl.trainer.main_ppo",):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, "calculate_debug_metrics"):
+            try:
+                setattr(module, "calculate_debug_metrics", calculate_debug_metrics_safe)
+            except Exception as e:
+                logger.debug(
+                    "[pinchbench] %s alias patch skipped: %s",
+                    module_name,
+                    e,
+                )
+
     print(
         "[pinchbench] verl.utils.debug.metrics.calculate_debug_metrics patched "
         "(safe empty rollout_probs_diff)"
     )
+    return calculate_debug_metrics_safe
