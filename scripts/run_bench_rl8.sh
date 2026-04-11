@@ -29,8 +29,16 @@ if [[ -f "${REPO_ROOT}/.env" ]]; then
 fi
 
 MODEL="${MODEL:-Qwen/Qwen3-4B}"
-BASE_URL="${BASE_URL:-http://127.0.0.1:8010/v1}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:18010/v1}"
 API_KEY="${API_KEY:-dummy}"
+
+if ! curl -sf "${BASE_URL}/models" >/dev/null 2>&1; then
+  echo "ERROR: ${BASE_URL}/models is not reachable."
+  echo "       Start or fix the SSH tunnel first, then rerun."
+  echo "       Example:"
+  echo "         ssh -fN -o ServerAliveInterval=30 -L 127.0.0.1:18010:127.0.0.1:8010 root@213.173.105.9 -p 40054 -i ~/.ssh/id_ed25519"
+  exit 1
+fi
 
 echo "RL8_SUITE=${RL8_SUITE}"
 echo "MODEL=${MODEL} BASE_URL=${BASE_URL}"

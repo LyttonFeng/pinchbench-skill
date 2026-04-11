@@ -99,7 +99,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "goal": "Read workspace config.json, extract API endpoint, write a Python script that calls it, document in NOTES.md (same as PinchBench task; hybrid grader checks script + notes quality).",
         "optional_hints": (
             "Useful signals: the agent reads config.json first, derives the endpoint with a tool, writes a runnable "
-            "script that uses that endpoint, and leaves concise notes that match the actual implementation."
+            "script that uses that endpoint, and leaves concise notes that match the actual implementation. The script "
+            "should be grounded in runtime config access, not merely a copied value. The strongest version reads or "
+            "derives the endpoint at runtime from config.json instead of copying the sample URL."
         ),
         "reference_steps": [
             "Use config.json as the source of truth for the endpoint",
@@ -109,9 +111,11 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         ],
         "common_mistakes": [
             "Directly answering or drafting code before reading config.json",
-            "Hardcoding the URL instead of reading config.json (still common; judge penalizes)",
+            "Reading config.json but still hardcoding the endpoint in the script",
+            "Treating the sample URL as the only acceptable URL instead of preserving runtime config loading",
             "Script that does not actually reflect the config-derived endpoint",
             "Missing NOTES.md or notes that do not match the script",
+            "Producing a script that only works for the sample config instead of the general runtime pattern",
         ],
         "qwen_plus_stats": "4 turns, 3 tool calls. Python: 1704 bytes, NOTES: 1389 bytes.",
     },
@@ -165,7 +169,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "goal": "Analyze workspace CSV + XLSX per task, compute real aggregates, write data_summary.md (PinchBench id=task_18_spreadsheet_summary; markdown file may be task_19_spreadsheet_summary.md on disk).",
         "optional_hints": (
             "Useful signals: the agent extracts real numbers from the CSV/XLSX with tools first, computes aggregates, "
-            "and writes a summary whose values are traceable back to the source files."
+            "and writes a summary whose values are traceable back to the source files. For XLSX, use a real parser or "
+            "library; do not treat the spreadsheet as plain text. If one parsing route fails, retry with another "
+            "tool/path rather than guessing values."
         ),
         "reference_steps": [
             "Extract real numeric data from the CSV and XLSX sources",
@@ -176,8 +182,11 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "common_mistakes": [
             "Attempting to summarize the spreadsheet without extracting numeric data first",
             "Pretending to read .xlsx as UTF-8 text and inventing numbers",
+            "Using only one file and ignoring the other source when both are required",
             "Writing summary without any successful numeric extraction",
             "Not retrying with another tool when first exec fails",
+            "Filling gaps with guessed numbers after a parsing error instead of re-parsing",
+            "Reporting aggregates that cannot be traced back to the raw rows",
         ],
         "qwen_plus_stats": "7 turns, 6 tool calls, 1728 bytes. Switched from pandas to awk when needed.",
     },
@@ -185,7 +194,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "goal": "Write market_research.md: enterprise observability/APM landscape, top ~5 players, differentiators, pricing models, trends; comparison table and analyst-style structure. Use web search if available; else knowledge (per task text).",
         "optional_hints": (
             "Useful signals: the agent identifies major players using research tools first when available, compares pricing "
-            "and differentiation, and writes a structured analyst-style brief instead of generic commentary."
+            "and differentiation, and writes a structured analyst-style brief instead of generic commentary. The brief "
+            "should name concrete vendors and include at least one specific pricing or product signal. The comparison "
+            "table should compare the same dimensions across vendors."
         ),
         "reference_steps": [
             "Collect current market context on observability/APM",
@@ -197,7 +208,10 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Writing generic commentary without first collecting market context when web/search tools are available",
             "Missing market_research.md or fewer than 5 meaningful competitor sections",
             "Generic fluff with no pricing or trends",
+            "Naming vendors without concrete differentiators or product/pricing evidence",
+            "A comparison table where rows/columns are not aligned across vendors",
             "Search queries with stale years when using web_search",
+            "Writing a table that does not actually compare the same dimensions across vendors",
         ],
         "qwen_plus_stats": "5 turns, 4 tool calls, 8412 bytes. Three search angles: leaders, comparison, pricing.",
     },
@@ -205,7 +219,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "goal": "Write polymarket_briefing.md: top 3 trending Polymarket markets (real/active), Yes/No odds, related news within 48h. Task allows gamma API or polymarket.com / web search; do not fabricate markets or odds.",
         "optional_hints": (
             "Useful signals: the agent finds real active markets with tools first, checks current odds, and links each "
-            "market to fresh supporting news without inventing details."
+            "market to fresh supporting news without inventing details. Prefer the gamma API for market discovery; if "
+            "one source fails, try the permitted alternative before giving up. The gamma API should be treated as the "
+            "primary discovery path, with web search as fallback for corroboration/news."
         ),
         "reference_steps": [
             "Find real active Polymarket markets and current odds",
@@ -218,6 +234,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Hallucinated market names or odds",
             "News not tied to the market or not recent",
             "Wrong filename or missing 3 market blocks",
+            "Giving up after a failed search instead of trying the gamma API / alternate permitted source",
+            "Using web search as the primary discovery path when the gamma API is available",
+            "Reporting a market as 'unavailable' when the allowed fallback path is still available",
         ],
         "qwen_plus_stats": "8 turns, 7 tool calls, 1719 bytes. Searched trends then each topic individually.",
     },
