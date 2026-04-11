@@ -96,6 +96,7 @@ export PINCHBENCH_KEEP_LATEST_CKPT
 TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-auto}"
 # 若设置正整数：覆盖 len(train_dataloader)*total_epochs，精确跑 N 次 PPO 迭代（与 veRL RayPPOTrainer.total_training_steps 一致）
 TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-}"
+TOTAL_EPOCHS="${TOTAL_EPOCHS:-10}"
 TEST_FREQ="${TEST_FREQ:-5}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # BEST_CKPT=0 时：只保留最近 N 个 global_step_*
 MAX_CRITIC_CKPT_TO_KEEP="${MAX_CRITIC_CKPT_TO_KEEP:-1}"  # 无 critic 时无影响
@@ -411,7 +412,7 @@ python3 -m verl.trainer.main_ppo \
     ${HYDRA_MAX_ACTOR_KEEP} \
     trainer.max_critic_ckpt_to_keep="${MAX_CRITIC_CKPT_TO_KEEP}" \
     trainer.test_freq="${TEST_FREQ}" \
-    trainer.total_epochs=20 \
+    trainer.total_epochs="${TOTAL_EPOCHS}" \
     "${TOTAL_TRAINING_STEPS_ARG[@]}" \
     trainer.resume_mode="${TRAINER_RESUME_MODE}" \
     trainer.default_local_dir="${OUTPUT_DIR}"
