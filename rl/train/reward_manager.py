@@ -53,8 +53,10 @@ def compute_score(
     if reward_mode == "baseline" or not trajectory:
         return {
             "score": terminal_reward,
+            "total_reward": terminal_reward,
             "terminal_reward": terminal_reward,
             "process_reward": 0.0,
+            "terminal_success": terminal_success,
             "reward_mode": reward_mode if trajectory else "fallback",
             "task_id": task_id,
             "n_turns": 0,
@@ -83,8 +85,10 @@ def compute_score(
 
         return {
             "score": total_reward,
+            "total_reward": total_reward,
             "terminal_reward": terminal_reward,
             "process_reward": total_process,
+            "terminal_success": terminal_success,
             "reward_mode": reward_mode,
             "task_id": task_id,
             "n_turns": len(per_turn_rewards),
@@ -94,8 +98,10 @@ def compute_score(
         print(f"[PinchBench reward] Error computing process reward: {e}")
         return {
             "score": terminal_reward,
+            "total_reward": terminal_reward,
             "terminal_reward": terminal_reward,
             "process_reward": 0.0,
+            "terminal_success": terminal_success,
             "reward_mode": "error",
             "task_id": task_id,
             "error": str(e),

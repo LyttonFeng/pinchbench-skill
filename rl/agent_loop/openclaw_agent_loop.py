@@ -368,8 +368,16 @@ class OpenClawAgentLoop(AgentLoopBase):
         # per_turn_rewards already includes terminal_reward on the last turn
         # (added by compute_episode_rewards_async), so do NOT add it again
         total_reward = sum(per_turn_rewards)
-        logger.info("Reward: total=%.2f, terminal=%.1f, per_turn=%s, turns=%d, mode=%s",
-                     total_reward, terminal_reward, per_turn_rewards, turn_count, self.oc_config.reward_mode)
+        process_reward = total_reward - terminal_reward
+        logger.info(
+            "Reward: total=%.2f process=%.2f terminal=%.1f per_turn=%s turns=%d mode=%s",
+            total_reward,
+            process_reward,
+            terminal_reward,
+            per_turn_rewards,
+            turn_count,
+            self.oc_config.reward_mode,
+        )
 
         # Assign per-turn rewards at <|im_end|> token positions
         # terminal_reward=0 here because it's already in per_turn_rewards
@@ -403,6 +411,8 @@ class OpenClawAgentLoop(AgentLoopBase):
             ),
             extra_fields={
                 "turn_scores": per_turn_rewards,
+                "total_reward": total_reward,
+                "process_reward": process_reward,
                 "tool_rewards": reward_at_tokens[:response_length],
                 "task_id": task_id,
                 "terminal_success": terminal_success,

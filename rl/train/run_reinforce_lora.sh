@@ -8,8 +8,8 @@
 # 三组 ablation 实验：
 #   REWARD_MODE=baseline    → Mode A: 纯 terminal reward
 #   REWARD_MODE=rule        → Mode B: 通用行为规则 + terminal (无 LLM 调用)
-#   REWARD_MODE=self-judge  → Mode C: Qwen3-4B self-judge with rubric + 天眼 (默认)
-#   REWARD_MODE=oracle-judge→ Mode D: qwen-plus judge (fallback)
+#   REWARD_MODE=self-judge  → Mode C: Qwen3-4B self-judge with rubric prompt + terminal reward (默认)
+#   REWARD_MODE=oracle-judge→ Mode D: qwen-plus judge with rubric prompt + terminal reward
 #
 # 用法：
 #   # Step 1: 准备 prompt 数据
@@ -183,7 +183,7 @@ export REWARD_MODE="${REWARD_MODE}"
 export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
 # Give OpenClaw more time to respond before treating turn 0 as a dead session.
 export AGENT_TIMEOUT="${AGENT_TIMEOUT:-240}"
-# Lower the terminal reward weight so intermediate process signals matter more.
+# Terminal reward weight for success/fail signal.
 export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.3}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
 export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
