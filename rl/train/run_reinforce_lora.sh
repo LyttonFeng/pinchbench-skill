@@ -61,7 +61,7 @@ export ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 export VLLM_NO_USAGE_STATS="${VLLM_NO_USAGE_STATS:-1}"
 
 # ── 训练超参 ──
-BATCH_SIZE="${BATCH_SIZE:-1}"          # ECS 4核8G 资源有限，单并发最稳定
+BATCH_SIZE="${BATCH_SIZE:-2}"          # 默认提高到 2，减少每步验证频率带来的开销
 MICRO_BATCH="${MICRO_BATCH:-1}"        # 与 batch_size 匹配
 LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
@@ -97,12 +97,12 @@ TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-auto}"
 # 若设置正整数：覆盖 len(train_dataloader)*total_epochs，精确跑 N 次 PPO 迭代（与 veRL RayPPOTrainer.total_training_steps 一致）
 TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-10}"
-TEST_FREQ="${TEST_FREQ:-5}"
+TEST_FREQ="${TEST_FREQ:-1}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # BEST_CKPT=0 时：只保留最近 N 个 global_step_*
 MAX_CRITIC_CKPT_TO_KEEP="${MAX_CRITIC_CKPT_TO_KEEP:-1}"  # 无 critic 时无影响
 
 if [ "${PINCHBENCH_BEST_CKPT}" = "1" ]; then
-  SAVE_FREQ="${SAVE_FREQ:-${TEST_FREQ}}"
+  SAVE_FREQ="${SAVE_FREQ:-2}"
   HYDRA_MAX_ACTOR_KEEP='trainer.max_actor_ckpt_to_keep=null'
 else
   SAVE_FREQ="${SAVE_FREQ:-20}"
