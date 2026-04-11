@@ -248,8 +248,9 @@ python3 - <<'PY'
 import json
 import os
 import subprocess
+from typing import List, Optional, Set, Tuple
 
-def parse_aliases(env_name: str, defaults: tuple[str, ...]) -> list[str]:
+def parse_aliases(env_name: str, defaults: Tuple[str, ...]) -> List[str]:
     raw = os.environ.get(env_name, "").strip()
     if raw:
         aliases = [item.strip() for item in raw.split(",") if item.strip()]
@@ -257,7 +258,7 @@ def parse_aliases(env_name: str, defaults: tuple[str, ...]) -> list[str]:
             return aliases
     return list(defaults)
 
-def first_match(ready: set[str], aliases: list[str]) -> str | None:
+def first_match(ready: Set[str], aliases: List[str]) -> Optional[str]:
     for alias in aliases:
         if alias in ready:
             return alias
