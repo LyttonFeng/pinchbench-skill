@@ -94,6 +94,8 @@ PINCHBENCH_KEEP_LATEST_CKPT="${PINCHBENCH_KEEP_LATEST_CKPT:-1}"
 export PINCHBENCH_KEEP_LATEST_CKPT
 # veRL: auto=从 default_local_dir 找最新 ckpt 续训；disable=从头训练（仍建议删掉旧 global_step_* 省盘）
 TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-auto}"
+# 若设置正整数：覆盖 len(train_dataloader)*total_epochs，精确跑 N 次 PPO 迭代（与 veRL RayPPOTrainer.total_training_steps 一致）
+TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-}"
 TEST_FREQ="${TEST_FREQ:-5}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # BEST_CKPT=0 时：只保留最近 N 个 global_step_*
 MAX_CRITIC_CKPT_TO_KEEP="${MAX_CRITIC_CKPT_TO_KEEP:-1}"  # 无 critic 时无影响
@@ -130,6 +132,11 @@ echo "  Grading judge: ${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus} @ ${PINCHBENCH
 echo "  数据: ${DATA_DIR}"
 echo "  输出: ${OUTPUT_DIR}"
 echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  keep_latest_ckpt: ${PINCHBENCH_KEEP_LATEST_CKPT}  save_freq: ${SAVE_FREQ}  test_freq: ${TEST_FREQ}"
+if [ -n "${TOTAL_TRAINING_STEPS}" ]; then
+  echo "  trainer.total_training_steps: ${TOTAL_TRAINING_STEPS}  (overrides epoch-based step count)"
+else
+  echo "  trainer.total_training_steps: <unset>  (veRL default: dataloader_len * total_epochs)"
+fi
 echo "  trainer.resume_mode: ${TRAINER_RESUME_MODE}"
 if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
   echo "  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
@@ -337,6 +344,11 @@ fi
 mkdir -p "${OUTPUT_DIR}" "${TENSORBOARD_DIR}"
 # TensorBoard：veRL 读 TENSORBOARD_DIR（verl/utils/tracking.py）；须 pip install tensorboard
 
+TOTAL_TRAINING_STEPS_ARG=()
+if [ -n "${TOTAL_TRAINING_STEPS}" ]; then
+  TOTAL_TRAINING_STEPS_ARG=(trainer.total_training_steps="${TOTAL_TRAINING_STEPS}")
+fi
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="${TRAIN_FILE}" \
@@ -395,5 +407,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.max_critic_ckpt_to_keep="${MAX_CRITIC_CKPT_TO_KEEP}" \
     trainer.test_freq="${TEST_FREQ}" \
     trainer.total_epochs=20 \
+    "${TOTAL_TRAINING_STEPS_ARG[@]}" \
     trainer.resume_mode="${TRAINER_RESUME_MODE}" \
     trainer.default_local_dir="${OUTPUT_DIR}"
