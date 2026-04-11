@@ -38,8 +38,9 @@ if not logger.handlers:
 # ══════════════════════════════════════════════════════════════
 
 _TASK_OPTIONAL_HINTS_DEFAULT = (
-    "Typical agents gather context, take actions, and verify; many valid tool orders and strategies "
-    "can satisfy the task goal."
+    "Typical agents gather context, take actions, and verify. When the task requires reading files, searching, "
+    "editing, or checking facts, prefer using a tool first and only then summarize the result. Many valid tool "
+    "orders and strategies can satisfy the task goal."
 )
 
 
@@ -55,8 +56,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_02_stock": {
         "goal": "Research Apple (AAPL) stock price, save to stock_report.txt including the literal ticker AAPL, price, date, and market summary (PinchBench automated grading requires the substring AAPL in the file).",
         "optional_hints": (
-            "Useful signals: the agent gathers fresh AAPL market data, then writes a grounded stock_report.txt "
-            "with ticker, price, date, and a concise summary."
+            "Useful signals: the agent gathers fresh AAPL market data with a tool first, then writes a grounded "
+            "stock_report.txt with ticker, price, date, and a concise summary."
         ),
         "reference_steps": [
             "Gather current AAPL market data from a reliable source",
@@ -65,6 +66,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Verify the file exists and contains the required ticker token",
         ],
         "common_mistakes": [
+            "Answering from memory or text-only before checking current AAPL data",
             "Writing only 'Apple' or company name without the literal token AAPL (automated grader checks \\bAAPL\\b)",
             "Searching but never writing the file (premature termination)",
             "Writing the file without any web_search first (fabricating data)",
@@ -75,8 +77,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_12_skill_search": {
         "goal": "Update config/settings.json and config/database.yml per prompt: localhost→prod-db.example.com, myapp_dev/myapp_test→myapp_prod, log debug→warn, API URL to https://api.example.com. Automated grader checks file contents.",
         "optional_hints": (
-            "Useful signals: the agent inspects both config files, applies every required substitution, then verifies "
-            "the final contents before finishing."
+            "Useful signals: the agent inspects both config files with tools first, applies every required substitution, "
+            "then verifies the final contents before finishing."
         ),
         "reference_steps": [
             "Inspect both config files before editing",
@@ -85,6 +87,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Verify the final file contents after editing",
         ],
         "common_mistakes": [
+            "Skipping inspection and trying to 'guess' replacements from the prompt",
             "Running sed -i without reading targets first (blind replacement)",
             "Repeating the same failing exec/sed instead of switching to edit",
             "Missing one file or one replacement class (localhost, DB name, log level, API URL)",
@@ -95,8 +98,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_10_workflow": {
         "goal": "Read workspace config.json, extract API endpoint, write a Python script that calls it, document in NOTES.md (same as PinchBench task; hybrid grader checks script + notes quality).",
         "optional_hints": (
-            "Useful signals: the agent derives the endpoint from config.json, writes a runnable script that uses "
-            "that endpoint, and leaves concise notes that match the actual implementation."
+            "Useful signals: the agent reads config.json first, derives the endpoint with a tool, writes a runnable "
+            "script that uses that endpoint, and leaves concise notes that match the actual implementation."
         ),
         "reference_steps": [
             "Use config.json as the source of truth for the endpoint",
@@ -105,6 +108,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Write NOTES.md that accurately matches what the script does",
         ],
         "common_mistakes": [
+            "Directly answering or drafting code before reading config.json",
             "Hardcoding the URL instead of reading config.json (still common; judge penalizes)",
             "Script that does not actually reflect the config-derived endpoint",
             "Missing NOTES.md or notes that do not match the script",
@@ -114,8 +118,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_22_second_brain": {
         "goal": "Multi-session task (OpenClaw sessions in frontmatter): Session 1 — write user facts to memory/MEMORY.md (Rust, Jan 15 2024, Dr. Elena Vasquez, NeonDB, secret phrase). Session 2 — answer language + project from file. Session 3 (new session) — read MEMORY.md and answer all 5 recall questions. Matches PinchBench hybrid grader.",
         "optional_hints": (
-            "Useful signals: the agent persists the required facts correctly, retrieves them from MEMORY.md in a "
-            "fresh session, and answers every recall item consistently from saved memory."
+            "Useful signals: the agent persists the required facts correctly with a tool, retrieves them from MEMORY.md "
+            "in a fresh session, and answers every recall item consistently from saved memory."
         ),
         "reference_steps": [
             "Persist the required facts into memory/MEMORY.md without missing or corrupting them",
@@ -124,6 +128,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Answer all five recall questions exactly from the stored facts",
         ],
         "common_mistakes": [
+            "Trying to answer recall questions without re-reading MEMORY.md in the new session",
             "Wrong path (must be memory/MEMORY.md under workspace)",
             "Missing any of the required facts in MEMORY.md",
             "Session 3 not reading the file and hallucinating answers",
@@ -134,8 +139,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_16_email_triage": {
         "goal": "Read all 13 files in inbox/ (email_01.txt … email_13.txt), then write triage_report.md: top summary + day plan; for each email assign Priority P0–P4, Category (incident/client/internal-request/administrative/code-review/automated/newsletter/spam), and recommended action; sort entries by priority (most urgent first). PinchBench checks: production outage email as P0; monitoring alert tied to same incident; BigClient email P0/P1; promotional/spam email P4; report structure and summary section.",
         "optional_hints": (
-            "Useful signals: the agent covers the whole inbox before writing, correctly flags the urgent incident "
-            "and big-client mail, and produces a report whose priorities match the content."
+            "Useful signals: the agent covers the whole inbox with read tools before writing, correctly flags the urgent "
+            "incident and big-client mail, and produces a report whose priorities match the content."
         ),
         "reference_steps": [
             "Cover the entire inbox before committing to the report",
@@ -144,6 +149,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Write triage_report.md with priorities, categories, and actions that match the email content",
         ],
         "common_mistakes": [
+            "Starting the report from memory or after only a partial inbox read",
             "Writing triage_report.md before reading all 13 emails or omitting any email from the report",
             "Missing file triage_report.md or wrong filename",
             "Production database outage / CTO war-room email not labeled P0",
@@ -158,8 +164,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_18_spreadsheet_summary": {
         "goal": "Analyze workspace CSV + XLSX per task, compute real aggregates, write data_summary.md (PinchBench id=task_18_spreadsheet_summary; markdown file may be task_19_spreadsheet_summary.md on disk).",
         "optional_hints": (
-            "Useful signals: the agent extracts real numbers from the CSV/XLSX, computes aggregates, and writes "
-            "a summary whose values are traceable back to the source files."
+            "Useful signals: the agent extracts real numbers from the CSV/XLSX with tools first, computes aggregates, "
+            "and writes a summary whose values are traceable back to the source files."
         ),
         "reference_steps": [
             "Extract real numeric data from the CSV and XLSX sources",
@@ -168,6 +174,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Check that the reported numbers match the extracted data",
         ],
         "common_mistakes": [
+            "Attempting to summarize the spreadsheet without extracting numeric data first",
             "Pretending to read .xlsx as UTF-8 text and inventing numbers",
             "Writing summary without any successful numeric extraction",
             "Not retrying with another tool when first exec fails",
@@ -177,8 +184,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_18_market_research": {
         "goal": "Write market_research.md: enterprise observability/APM landscape, top ~5 players, differentiators, pricing models, trends; comparison table and analyst-style structure. Use web search if available; else knowledge (per task text).",
         "optional_hints": (
-            "Useful signals: the agent identifies major players, compares pricing and differentiation, and writes "
-            "a structured analyst-style brief instead of generic commentary."
+            "Useful signals: the agent identifies major players using research tools first when available, compares pricing "
+            "and differentiation, and writes a structured analyst-style brief instead of generic commentary."
         ),
         "reference_steps": [
             "Collect current market context on observability/APM",
@@ -187,6 +194,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Write a structured market_research.md with an executive summary and comparison table",
         ],
         "common_mistakes": [
+            "Writing generic commentary without first collecting market context when web/search tools are available",
             "Missing market_research.md or fewer than 5 meaningful competitor sections",
             "Generic fluff with no pricing or trends",
             "Search queries with stale years when using web_search",
@@ -196,8 +204,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_24_polymarket_briefing": {
         "goal": "Write polymarket_briefing.md: top 3 trending Polymarket markets (real/active), Yes/No odds, related news within 48h. Task allows gamma API or polymarket.com / web search; do not fabricate markets or odds.",
         "optional_hints": (
-            "Useful signals: the agent finds real active markets, checks current odds, and links each market to "
-            "fresh supporting news without inventing details."
+            "Useful signals: the agent finds real active markets with tools first, checks current odds, and links each "
+            "market to fresh supporting news without inventing details."
         ),
         "reference_steps": [
             "Find real active Polymarket markets and current odds",
@@ -206,6 +214,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Avoid inventing market names, odds, or sources",
         ],
         "common_mistakes": [
+            "Guessing markets or odds before checking a source",
             "Hallucinated market names or odds",
             "News not tied to the market or not recent",
             "Wrong filename or missing 3 market blocks",
@@ -402,6 +411,10 @@ def build_prm_prompt(
 ## Task Goal
 {rubric.get("goal", task_prompt[:500])}
 
+## Tool-Use Preference
+When the task requires reading files, searching, editing, computing, or checking facts, prefer a tool-first step over a text-only answer.
+Direct text-only summaries are low value if the agent has not yet gathered evidence with a tool.
+
 ## Optional Hints (illustrative only — many valid approaches exist)
 {optional_hints}
 
@@ -424,6 +437,7 @@ Agent's text: {content_preview}"""
 ## Scoring Instructions
 Evaluate whether this step makes the agent more likely to complete the task successfully.
 Consider:
+- Is the agent using a tool to gather evidence or take action when that is needed?
 - Does this step gather useful information, take a correct action, or reduce uncertainty?
 - Does this step avoid the common mistakes listed above?
 - Does this step contribute to completing the task, even if the exact path differs from the hints?
