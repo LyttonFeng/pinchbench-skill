@@ -74,6 +74,7 @@ PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE:-scalar}"  # scal
 # 默认 16384+12288=28672；此处给 29696 留约 1k 余量。显存紧张时可降 MAX_RESPONSE_LENGTH 或 VLLM_GPU_MEM_UTIL。
 export VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.28}"
 export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-29696}"
+export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-64}"
 # 数据侧序列上限（加长输出时同步提高 VLLM_MAX_MODEL_LEN）
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-16384}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-12288}"
@@ -149,7 +150,7 @@ if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
   echo "  max_actor_ckpt: ${MAX_ACTOR_CKPT_TO_KEEP}"
 fi
 echo "  tensorboard: ${TENSORBOARD_DIR}  (需: pip install tensorboard)"
-echo "  vLLM: gpu_memory_utilization=${VLLM_GPU_MEM_UTIL} max_model_len=${VLLM_MAX_MODEL_LEN}"
+echo "  vLLM: gpu_memory_utilization=${VLLM_GPU_MEM_UTIL} max_model_len=${VLLM_MAX_MODEL_LEN} max_num_seqs=${VLLM_MAX_NUM_SEQS}"
 echo "  序列: max_prompt_length=${MAX_PROMPT_LENGTH} max_response_length=${MAX_RESPONSE_LENGTH}"
 if [ "$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))" -gt "${VLLM_MAX_MODEL_LEN}" ]; then
   echo "  WARN: max_prompt+max_response 大于 VLLM_MAX_MODEL_LEN，请提高 VLLM_MAX_MODEL_LEN 或降低 prompt/response 上限"
@@ -404,6 +405,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.top_p=0.9 \
     actor_rollout_ref.rollout.gpu_memory_utilization="${VLLM_GPU_MEM_UTIL}" \
     actor_rollout_ref.rollout.max_model_len="${VLLM_MAX_MODEL_LEN}" \
+    actor_rollout_ref.rollout.max_num_seqs="${VLLM_MAX_NUM_SEQS}" \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
