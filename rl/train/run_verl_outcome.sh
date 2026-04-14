@@ -77,8 +77,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
-    reward.custom_reward_function.path="${REWARD_FN_PATH}" \
-    reward.custom_reward_function.name=compute_score \
+    +reward.custom_reward_function.path="${REWARD_FN_PATH}" \
+    +reward.custom_reward_function.name=compute_score \
     trainer.critic_warmup=0 \
     trainer.logger='["console"]' \
     trainer.project_name=pinchbench_rl \
