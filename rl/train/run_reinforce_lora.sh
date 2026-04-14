@@ -44,6 +44,13 @@ OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/reinforce_lora"
 AGENT_LOOP_CONFIG="${REPO_ROOT}/rl/agent_loop/config.yaml"
 REWARD_MANAGER_PATH="${REPO_ROOT}/rl/train/reward_manager.py"
 
+# RunPod root disk is small. Keep Hugging Face model cache on /workspace when available.
+if [ -d /workspace ]; then
+  export HF_HOME="${HF_HOME:-/workspace/hf_cache}"
+  export HF_HUB_CACHE="${HF_HUB_CACHE:-${HF_HOME}/hub}"
+  export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HUB_CACHE}}"
+fi
+
 TRAIN_FILE="${DATA_DIR}/train.parquet"
 VAL_FILE="${DATA_DIR}/val.parquet"
 
