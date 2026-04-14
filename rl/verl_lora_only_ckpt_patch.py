@@ -47,6 +47,7 @@ def _prune_old_global_steps(actor_local_path: str, max_ckpt_to_keep) -> None:
 
 
 def apply_patch() -> None:
+    from verl.single_controller.base.decorator import MAGIC_ATTR
     from verl.workers import fsdp_workers as fw
     from verl.single_controller.ray.base import RayWorkerGroup
 
@@ -105,6 +106,9 @@ def apply_patch() -> None:
 
         if getattr(self, "_is_offload_param", False):
             fw.offload_fsdp_model_to_cpu(self.actor_module_fsdp)
+
+    if hasattr(orig, MAGIC_ATTR):
+        setattr(save_lora_only, MAGIC_ATTR, getattr(orig, MAGIC_ATTR))
 
     cls.save_checkpoint = save_lora_only
     cls._pinchbench_lora_only_ckpt_patched = True
