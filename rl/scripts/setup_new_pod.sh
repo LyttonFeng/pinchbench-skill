@@ -6,6 +6,12 @@
 #             (自带 PyTorch 2.10 + Python 3.12 + CUDA 12.8)
 #  GPU 推荐: NVIDIA L40S (48GB) 或 A100 (80GB)
 #
+#  已验证软件栈（2026-04-14 / A100-SXM4-80GB）:
+#    PyTorch:     2.10.0 + CUDA 12.8
+#    vLLM:        0.19.0
+#    veRL:        0.7.1
+#    flash-attn:  2.8.3 (prebuilt wheel, do not compile)
+#
 #  用法:
 #    1. 新建 Pod，SSH 进去
 #    2. 运行: bash setup_new_pod.sh
@@ -74,10 +80,12 @@ HF_CACHE="/workspace/hf_cache"
 MODEL="Qwen/Qwen3-4B"
 VERL_VERSION="${VERL_VERSION:-0.7.1}"
 VLLM_VERSION="${VLLM_VERSION:-0.19.0}"
+FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.8.3}"
 
 echo "══════════════════════════════════════"
 echo "  RunPod 新 Pod 初始化"
 echo "  ECS: ${ECS_USER}@${ECS_HOST}:${ECS_PORT}"
+echo "  Stack: PyTorch 2.10 + vLLM ${VLLM_VERSION} + veRL ${VERL_VERSION} + flash-attn ${FLASH_ATTN_VERSION}"
 echo "══════════════════════════════════════"
 
 # ── 1. SSH Key ──
@@ -147,11 +155,11 @@ if [[ "$FA_VER" == "none" ]]; then
     if [[ "$PY_VER" == "cp312" ]]; then
         pip install --break-system-packages \
             --no-cache-dir \
-            "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp312-cp312-linux_x86_64.whl"
+            "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-${FLASH_ATTN_VERSION}%2Bcu128torch2.10-cp312-cp312-linux_x86_64.whl"
     elif [[ "$PY_VER" == "cp311" ]]; then
         pip install --break-system-packages \
             --no-cache-dir \
-            "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp311-cp311-linux_x86_64.whl"
+            "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-${FLASH_ATTN_VERSION}%2Bcu128torch2.10-cp311-cp311-linux_x86_64.whl"
     else
         echo "  ⚠ 无匹配的 flash-attn wheel (Python ${PY_VER})"
         echo "  尝试 pip install flash-attn --no-build-isolation ..."
