@@ -288,6 +288,17 @@ class OpenClawAgentLoop(AgentLoopBase):
                 if turn_count == 0:
                     all_prompt_ids = list(prompt_token_ids)
 
+                response_length = self.rollout_config.response_length
+                if len(all_response_ids) >= response_length:
+                    logger.warning(
+                        "[run] Response budget exhausted before generation "
+                        "(turn=%d, used=%d, limit=%d); ending episode.",
+                        turn_count,
+                        len(all_response_ids),
+                        response_length,
+                    )
+                    break
+
                 logger.info("[run] Calling server_manager.generate (turn=%d, prompt_ids=%d)...", turn_count, len(prompt_token_ids))
                 gen_output = await self.server_manager.generate(
                     request_id=uuid.uuid4().hex,
