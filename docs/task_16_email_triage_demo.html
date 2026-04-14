@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>task_16_email_triage | RL Demo</title>
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:#11182d;
+      --panel2:#0f1527;
+      --line:#23304f;
+      --text:#e8eefc;
+      --muted:#93a4c7;
+      --accent:#6ee7b7;
+      --accent2:#60a5fa;
+      --bad:#fb7185;
+      --warn:#fbbf24;
+      --good:#34d399;
+      --chip:#1c2743;
+      --shadow: 0 18px 50px rgba(0,0,0,.35);
+      --radius: 18px;
+    }
+    * { box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(96,165,250,.16), transparent 30%),
+        radial-gradient(circle at top right, rgba(110,231,183,.12), transparent 28%),
+        linear-gradient(180deg, #09101d 0%, #0b1020 100%);
+      color:var(--text);
+      line-height:1.5;
+    }
+    .wrap{
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 20px 40px;
+    }
+    .hero{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
+      padding:22px;
+      border:1px solid var(--line);
+      background: linear-gradient(180deg, rgba(17,24,45,.92), rgba(11,16,32,.92));
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      margin-bottom:18px;
+    }
+    .hero h1{
+      margin:0 0 8px;
+      font-size: 30px;
+      letter-spacing:.2px;
+    }
+    .hero p{ margin:0; color:var(--muted); max-width: 840px; }
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border-radius: 999px;
+      background: rgba(96,165,250,.12);
+      color:#cfe3ff;
+      border:1px solid rgba(96,165,250,.3);
+      font-size:13px;
+      white-space:nowrap;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: 1.3fr .95fr .95fr;
+      gap:16px;
+      margin-bottom:16px;
+    }
+    .card{
+      border:1px solid var(--line);
+      background: linear-gradient(180deg, rgba(17,24,45,.88), rgba(12,18,34,.88));
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .card .hd{
+      padding:16px 18px;
+      border-bottom:1px solid var(--line);
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+    }
+    .card .hd h2{
+      margin:0;
+      font-size:18px;
+    }
+    .card .hd .sub{
+      color:var(--muted);
+      font-size:13px;
+    }
+    .card .bd{ padding:18px; }
+    .task-box{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:12px;
+    }
+    .mini{
+      background: rgba(15,21,39,.75);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:14px;
+    }
+    .mini h3{
+      margin:0 0 10px;
+      font-size:14px;
+      color:#dbe8ff;
+    }
+    .mini ul{ margin:0; padding-left:18px; color:var(--muted); }
+    .mini li{ margin:6px 0; }
+    .metric{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      margin-bottom:14px;
+    }
+    .metric .row{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      font-size:14px;
+    }
+    .bar{
+      height:10px;
+      background:#18213a;
+      border-radius:999px;
+      overflow:hidden;
+      border:1px solid #243150;
+    }
+    .fill{
+      height:100%;
+      border-radius:999px;
+    }
+    .fill.bad{ background: linear-gradient(90deg, #fb7185, #f97316); }
+    .fill.good{ background: linear-gradient(90deg, #34d399, #60a5fa); }
+    .stack{
+      display:flex;
+      flex-direction:column;
+      gap:16px;
+      margin-top:16px;
+    }
+    .side{
+      padding:18px;
+    }
+    .side h3{
+      margin:0 0 10px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      font-size:17px;
+    }
+    .tag{
+      font-size:12px;
+      padding:5px 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      border:1px solid var(--line);
+      color:var(--muted);
+    }
+    .snapshot{
+      height:220px;
+      border:1px dashed #35507f;
+      border-radius:16px;
+      background:
+        linear-gradient(180deg, rgba(10,15,29,.9), rgba(11,16,32,.85)),
+        radial-gradient(circle at 20% 20%, rgba(96,165,250,.12), transparent 20%);
+      padding:14px;
+      margin-bottom:12px;
+      overflow:hidden;
+    }
+    .mail-list{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .mail{
+      display:grid;
+      grid-template-columns: 18px 1fr auto;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      background: rgba(255,255,255,.04);
+      border:1px solid rgba(255,255,255,.05);
+      border-radius:12px;
+      font-size:13px;
+    }
+    .dot{ width:10px;height:10px;border-radius:50%; background:#64748b; }
+    .mail .title{ color:#eaf1ff; }
+    .mail .meta{ color:var(--muted); font-size:12px; }
+    .prio{
+      font-size:12px;
+      padding:4px 8px;
+      border-radius:999px;
+      color:#fff;
+      font-weight:600;
+    }
+    .p0{ background:#ef4444; }
+    .p1{ background:#f59e0b; }
+    .p2{ background:#64748b; }
+    .result-box{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .result{
+      padding:12px 14px;
+      border:1px solid var(--line);
+      border-radius:14px;
+      background: rgba(15,21,39,.75);
+      font-size:13px;
+      color:var(--muted);
+    }
+    .result strong{ color:var(--text); }
+    .timeline-wrap{ padding:18px; }
+    .timeline{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      margin-top:12px;
+    }
+    .turn{
+      border:1px solid var(--line);
+      border-radius:16px;
+      background: rgba(15,21,39,.75);
+      padding:14px;
+    }
+    .turn-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      margin-bottom:10px;
+    }
+    .turn-head b{
+      font-size:14px;
+      color:var(--text);
+    }
+    .turn-pill{
+      font-size:12px;
+      padding:4px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.05);
+      color:var(--muted);
+      white-space:nowrap;
+    }
+    .turn-body{
+      display:grid;
+      grid-template-columns: 1fr 18px 1fr;
+      gap:10px;
+      align-items:stretch;
+    }
+    .node{
+      border-radius:12px;
+      padding:10px 12px;
+      border:1px solid rgba(255,255,255,.06);
+      min-height:84px;
+    }
+    .node .label{
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:6px;
+      text-transform:uppercase;
+      letter-spacing:.04em;
+    }
+    .node .text{
+      font-size:13px;
+      color:var(--text);
+    }
+    .node.action{
+      background: rgba(96,165,250,.08);
+      border-color: rgba(96,165,250,.22);
+    }
+    .node.feedback{
+      background: rgba(110,231,183,.07);
+      border-color: rgba(110,231,183,.18);
+    }
+    .arrow{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:var(--accent2);
+      font-size:18px;
+      font-weight:700;
+    }
+    .trace-note{
+      margin-top:10px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .compare-note{
+      margin-top:10px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .carousel{
+      margin-top:12px;
+    }
+    .carousel-viewport{
+      position:relative;
+      overflow:hidden;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background: rgba(15,21,39,.75);
+      min-height: 290px;
+    }
+    .slides{
+      display:flex;
+      width:300%;
+      transform: translateX(0%);
+      transition: transform .45s ease;
+    }
+    .slide{
+      width:100%;
+      padding:16px;
+      flex:0 0 100%;
+    }
+    .slide-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      margin-bottom:12px;
+    }
+    .slide-head b{
+      font-size:15px;
+      color:var(--text);
+    }
+    .slide-pill{
+      font-size:12px;
+      padding:4px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.05);
+      color:var(--muted);
+      white-space:nowrap;
+    }
+    .slide-grid{
+      display:grid;
+      grid-template-columns: 1fr 18px 1fr;
+      gap:10px;
+      align-items:stretch;
+    }
+    .carousel-dots{
+      display:flex;
+      gap:8px;
+      justify-content:center;
+      margin-top:12px;
+    }
+    .dot-btn{
+      width:12px;
+      height:12px;
+      padding:0;
+      border:none;
+      border-radius:999px;
+      background:#36486f;
+      opacity:.55;
+      cursor:pointer;
+    }
+    .dot-btn.active{
+      background: var(--accent2);
+      opacity:1;
+      transform: scale(1.15);
+    }
+    .highlight{
+      color: var(--good);
+      font-weight:700;
+    }
+    .badtxt{ color: var(--bad); font-weight:700; }
+    .foot{
+      margin-top:16px;
+      padding:16px 18px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background: linear-gradient(180deg, rgba(17,24,45,.88), rgba(12,18,34,.88));
+      color:var(--muted);
+      box-shadow: var(--shadow);
+    }
+    .foot strong{ color:var(--text); }
+    @media (max-width: 980px){
+      .grid,.compare,.task-box{ grid-template-columns:1fr; }
+      .hero{ flex-direction:column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <div class="badge">RL Demo · task_16_email_triage</div>
+        <h1>Baseline vs RL LoRA：邮件 triage 能力对比</h1>
+        <p>
+          这个页面展示同一个任务在原始 Qwen3-4B 和 RL LoRA 下的表现差异。
+          重点不是“模型会不会回答”，而是它会不会真正把邮件读完、排好优先级、并输出可交付的 triage 结果。
+        </p>
+      </div>
+      <div class="badge">适合做汇报 / 方案展示 / 手机查看</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="hd">
+          <div>
+            <h2>任务说明</h2>
+            <div class="sub">输入是什么，输出要什么</div>
+          </div>
+          <div class="tag">task_16_email_triage</div>
+        </div>
+        <div class="bd">
+          <div class="task-box">
+            <div class="mini">
+              <h3>任务目标</h3>
+              <ul>
+                <li>读取全部邮件</li>
+                <li>识别重要客户 / 高优先级事项</li>
+                <li>按优先级分类 triage</li>
+                <li>输出最终处理结果</li>
+              </ul>
+            </div>
+            <div class="mini">
+              <h3>看点</h3>
+              <ul>
+                <li>是否会先完整读取再判断</li>
+                <li>是否能稳定排序而不是乱分</li>
+                <li>是否输出可交付的 triage report</li>
+                <li>是否能把任务真正做完</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <div>
+            <h2>Baseline 起点</h2>
+            <div class="sub">Qwen3-4B 原始模型</div>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="metric">
+            <div class="row"><span>任务完成度</span><b class="badtxt">39%</b></div>
+            <div class="bar"><div class="fill bad" style="width:39%"></div></div>
+          </div>
+          <div class="result-box">
+            <div class="result">
+              <strong>常见表现：</strong>能开始 triage，但优先级判断不稳，容易漏重点。
+            </div>
+            <div class="result">
+              <strong>问题：</strong>知道要做什么，但执行链路不够稳定。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <div>
+            <h2>RL LoRA 结果</h2>
+            <div class="sub">Qwen3-4B + LoRA</div>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="metric">
+            <div class="row"><span>任务完成度</span><b class="highlight">89%</b></div>
+            <div class="bar"><div class="fill good" style="width:89%"></div></div>
+          </div>
+          <div class="result-box">
+            <div class="result">
+              <strong>变化：</strong>更稳定地完成分类、排序和输出，triage 结果更完整。
+            </div>
+            <div class="result">
+              <strong>结论：</strong>RL 让模型不只是“会说”，而是更会把事情做完。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="card side">
+        <h3>Baseline 过程 <span class="tag">原始 Qwen3-4B</span></h3>
+        <div class="snapshot">
+          <div class="mail-list">
+            <div class="mail">
+              <div class="dot"></div>
+              <div>
+                <div class="title">Urgent: client escalation on invoice issue</div>
+                <div class="meta">Needs attention today</div>
+              </div>
+              <div class="prio p1">P1</div>
+            </div>
+            <div class="mail">
+              <div class="dot"></div>
+              <div>
+                <div class="title">FYI: weekly newsletter</div>
+                <div class="meta">No action needed</div>
+              </div>
+              <div class="prio p2">P2</div>
+            </div>
+            <div class="mail">
+              <div class="dot"></div>
+              <div>
+                <div class="title">Contract renewal from big client</div>
+                <div class="meta">High value, should prioritize</div>
+              </div>
+              <div class="prio p0">P0</div>
+            </div>
+          </div>
+        </div>
+        <div class="result">
+          <strong>观察：</strong>baseline 多步也会走，但常见问题是优先级判断不稳，或者中途就把 triage 结论提前收掉。
+        </div>
+        <div class="compare-note">重点：它不是“完全不会做”，而是多步执行链没把任务稳稳做完。</div>
+      </div>
+
+      <div class="card side">
+        <h3>LoRA 过程 <span class="tag">RL 训练后</span></h3>
+        <div class="snapshot">
+          <div class="mail-list">
+            <div class="mail">
+              <div class="dot"></div>
+              <div>
+                <div class="title">Contract renewal from big client</div>
+                <div class="meta">P0 · prioritize first</div>
+              </div>
+              <div class="prio p0">P0</div>
+            </div>
+            <div class="mail">
+              <div class="dot"></div>
+              <div>
+                <div class="title">Urgent: client escalation on invoice issue</div>
+                <div class="meta">P1 · follow-up required</div>
+              </div>
+              <div class="prio p1">P1</div>
+            </div>
+            <div class="mail">
+              <div class="dot"></div>
+              <div>
+                <div class="title">FYI: weekly newsletter</div>
+                <div class="meta">P2 · low priority</div>
+              </div>
+              <div class="prio p2">P2</div>
+            </div>
+          </div>
+        </div>
+        <div class="result">
+          <strong>观察：</strong>LoRA 更稳定地推进多步执行，分类、排序和输出更完整，triage 更像真正交付结果。
+        </div>
+        <div class="compare-note">重点：RL 把“每一步都继续推进任务”的行为学稳了。</div>
+      </div>
+    </div>
+
+    <div class="card timeline-wrap">
+      <div class="hd">
+        <div>
+          <h2>多步执行轨迹</h2>
+          <div class="sub">模型 action -> 环境反馈 -> 下一步 action</div>
+        </div>
+        <div class="tag">重点展示“过程”而不是只看最终分数</div>
+      </div>
+      <div class="bd">
+        <div class="stack" style="margin-top:0;">
+          <div class="card side" style="box-shadow:none;">
+            <h3 style="margin-top:0;">Baseline 轨迹 <span class="tag">更容易早停 / 漏优先级</span></h3>
+            <div class="timeline">
+              <div class="turn">
+                <div class="turn-head">
+                  <b>Turn 1</b><span class="turn-pill">Model action</span>
+                </div>
+                <div class="turn-body">
+                  <div class="node action">
+                    <div class="label">模型动作</div>
+                    <div class="text">先粗看邮件标题，尝试直接给出分类结论。</div>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node feedback">
+                    <div class="label">环境反馈</div>
+                    <div class="text">发现高优先级客户邮件还没完整确认，triage 结果不够稳。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="turn">
+                <div class="turn-head">
+                  <b>Turn 2</b><span class="turn-pill">Model action</span>
+                </div>
+                <div class="turn-body">
+                  <div class="node action">
+                    <div class="label">下一步动作</div>
+                    <div class="text">继续尝试分类，但优先级顺序没有明显修正，容易漏掉重点邮件。</div>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node feedback">
+                    <div class="label">环境反馈</div>
+                    <div class="text">任务推进有限，输出内容可读但不够完整，结果得分偏低。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="turn">
+                <div class="turn-head">
+                  <b>Turn 3</b><span class="turn-pill">End state</span>
+                </div>
+                <div class="turn-body">
+                  <div class="node action">
+                    <div class="label">收尾动作</div>
+                    <div class="text">模型提前结束，给出了一个“能看但不够完整”的 triage report。</div>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node feedback">
+                    <div class="label">环境反馈</div>
+                    <div class="text">邮件 triage 没有充分覆盖全部重点，最终完成度停在 baseline 水平。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="trace-note">关键信号：模型知道要做 triage，但没有把“先完整读、再稳定排优先级、再交付”跑通。</div>
+          </div>
+
+      <div class="card side" style="box-shadow:none;">
+        <h3 style="margin-top:0;">RL LoRA 轨迹 <span class="tag">更会推进任务</span></h3>
+        <div class="carousel" data-carousel="lora">
+          <div class="carousel-viewport">
+            <div class="slides">
+              <div class="slide">
+                <div class="slide-head">
+                  <b>Page 1 / Turn 1</b><span class="slide-pill">先完整扫描邮件</span>
+                </div>
+                <div class="slide-grid">
+                  <div class="node action">
+                    <div class="label">模型 action</div>
+                    <div class="text">完整扫描邮件列表，先抓高优先级客户和当天要处理的事项。</div>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node feedback">
+                    <div class="label">环境反馈</div>
+                    <div class="text">系统返回更清楚的任务状态，过程 reward 开始变正。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="slide">
+                <div class="slide-head">
+                  <b>Page 2 / Turn 2</b><span class="slide-pill">继续补全分类</span>
+                </div>
+                <div class="slide-grid">
+                  <div class="node action">
+                    <div class="label">下一步 action</div>
+                    <div class="text">根据前一轮反馈，补齐 P0 / P1 / P2 分类，保持 triage 结构完整。</div>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node feedback">
+                    <div class="label">环境反馈</div>
+                    <div class="text">triage 更稳定，输出开始接近 benchmark 期待的格式。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="slide">
+                <div class="slide-head">
+                  <b>Page 3 / Turn 3</b><span class="slide-pill">完成交付</span>
+                </div>
+                <div class="slide-grid">
+                  <div class="node action">
+                    <div class="label">收尾 action</div>
+                    <div class="text">完成 triage report，输出结构清楚、重点明确的最终结果。</div>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node feedback">
+                    <div class="label">环境反馈</div>
+                    <div class="text">任务完成度更高，结果更像一个真正可交付的邮件 triage 产物。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="carousel-dots" aria-label="LoRA trajectory pages">
+            <button class="dot-btn active" type="button" aria-label="page 1"></button>
+            <button class="dot-btn" type="button" aria-label="page 2"></button>
+            <button class="dot-btn" type="button" aria-label="page 3"></button>
+          </div>
+        </div>
+        <div class="trace-note">关键信号：RL 不只是让结果更好，而是让“多步执行链”更稳，最终能把任务做完。</div>
+      </div>
+    </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="hd">
+        <div>
+          <h2>结论</h2>
+          <div class="sub">这个 demo 想表达什么</div>
+        </div>
+      </div>
+      <div class="bd">
+        <div class="stepper">
+          <div class="step">
+            <div class="num">1</div>
+            <div>
+              <b>Baseline 能做，但不够稳</b>
+              <span>会进入任务，但优先级判断和交付结果不稳定。</span>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <div>
+              <b>RL 之后更会推进任务</b>
+              <span>模型更稳定地读完邮件、分类、排序并输出结果。</span>
+            </div>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <div>
+              <b>提升的是任务完成能力，不只是回答质量</b>
+              <span>这个 demo 适合用来说明 RL 对真实 agent 任务的作用。</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <strong>可直接替换的内容：</strong>
+      你后面可以把邮件列表、分类结果、任务说明换成真实 benchmark 的 transcript 截图或你自己重画的界面。
+      这个页面本身就是一个可直接改的 demo 骨架。
+    </div>
+  </div>
+  <script>
+    (function () {
+      const carousel = document.querySelector('[data-carousel="lora"]');
+      if (!carousel) return;
+      const slides = carousel.querySelector('.slides');
+      const dots = Array.from(carousel.querySelectorAll('.dot-btn'));
+      const total = dots.length;
+      let index = 0;
+      let timer = null;
+
+      function render(next) {
+        index = (next + total) % total;
+        slides.style.transform = `translateX(-${index * (100 / total)}%)`;
+        dots.forEach((dot, i) => dot.classList.toggle('active', i === index));
+      }
+
+      function play() {
+        stop();
+        timer = setInterval(() => render(index + 1), 2500);
+      }
+
+      function stop() {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      }
+
+      dots.forEach((dot, i) => {
+        dot.addEventListener('click', () => {
+          render(i);
+          play();
+        });
+      });
+
+      carousel.addEventListener('mouseenter', stop);
+      carousel.addEventListener('mouseleave', play);
+      render(0);
+      play();
+    })();
+  </script>
+</body>
+</html>

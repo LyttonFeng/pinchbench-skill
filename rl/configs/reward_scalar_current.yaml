@@ -1,0 +1,25 @@
+# Current online RL reward config snapshot.
+# This preserves the existing scalar-episode reward path used by
+# rl/train/run_reinforce_lora.sh before switching to turn-level loss.
+
+name: scalar_episode_reward_current
+train_entrypoint: rl/train/run_reinforce_lora.sh
+
+reward:
+  mode: self-judge
+  return_mode: scalar
+  terminal_reward_weight: 0.3
+  terminal_reward_anchor: last_valid_token
+  process_reward: per_turn_computed_but_aggregated
+
+judge:
+  prm_vllm_base_url: http://localhost:8000/v1
+  prm_model: Qwen3-4B
+  grading_backend: api
+  grading_model: qwen-plus
+
+loss:
+  strategy: episode_level_scalar
+  advantage_scope: entire_response
+  per_turn_credit_assignment: false
+

@@ -1,0 +1,35 @@
+# New turn-level reward config.
+# Intended for experiments where different assistant turns contribute
+# different rewards to the loss signal.
+
+name: turn_level_reward
+train_entrypoint: rl/train/run_reinforce_lora.sh
+
+reward:
+  mode: self-judge
+  return_mode: turn
+  terminal_reward_weight: 0.3
+  terminal_reward_anchor: last_assistant_turn
+  process_reward: per_turn_computed
+
+trainer_integration:
+  hydra_keys:
+    reward.reward_manager.path: rl/train/reward_manager.py
+    reward.reward_manager.name: PinchBenchRewardManager
+  reward_source:
+    primary: extra_info.tool_rewards
+    fallback: extra_info.turn_scores
+
+judge:
+  prm_vllm_base_url: http://localhost:8000/v1
+  prm_model: Qwen3-4B
+  grading_backend: api
+  grading_model: qwen-plus
+
+loss:
+  strategy: turn_level
+  advantage_scope: token_reward_tensor
+  per_turn_credit_assignment: true
+  notes:
+    - "OpenClawAgentLoop assigns each turn reward to that turn's <|im_end|> token."
+    - "PinchBenchRewardManager writes extra_info.tool_rewards into veRL's reward tensor."

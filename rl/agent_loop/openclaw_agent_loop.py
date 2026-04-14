@@ -359,7 +359,9 @@ class OpenClawAgentLoop(AgentLoopBase):
         # Compute reward
         transcript_raw = self._load_openclaw_transcript(session_id, task_id)
         terminal_success = self._run_grading(task_id, transcript_raw)
-        terminal_reward = 1.0 if terminal_success else -1.0
+        terminal_reward_raw = 1.0 if terminal_success else -1.0
+        terminal_reward_weight = float(os.environ.get("PINCHBENCH_TERMINAL_REWARD_WEIGHT", "0.3"))
+        terminal_reward = terminal_reward_weight * terminal_reward_raw
 
         trajectory_for_reward = self._transcript_to_messages(transcript_raw) or messages
         per_turn_rewards = await self._compute_rewards(

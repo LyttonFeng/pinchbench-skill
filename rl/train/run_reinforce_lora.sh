@@ -67,6 +67,7 @@ LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
 REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracle-judge
+PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE:-scalar}"  # scalar / turn
 # vLLM rollout：OOM 时先降 VLLM_GPU_MEM_UTIL（如 0.22）或 VLLM_MAX_MODEL_LEN（如 16384）
 # 大显存（如 A100 80GB）可酌情调高 VLLM_GPU_MEM_UTIL（如 0.40）以放大 KV 池、略提吞吐。
 # VLLM_MAX_MODEL_LEN 应 ≥ max_prompt + max_response（再加 ~1k～2k 余量）；否则长回复会被截断或报错。
@@ -129,6 +130,7 @@ echo "  LoRA rank: ${LORA_RANK}"
 echo "  GPU 数: ${N_GPUS}"
 echo "  Batch size: ${BATCH_SIZE}"
 echo "  Reward mode: ${REWARD_MODE}"
+echo "  Reward return mode: ${PINCHBENCH_REWARD_RETURN_MODE}"
 echo "  MAX_TURNS: ${MAX_TURNS}  (OpenClaw rollout; 覆盖: export MAX_TURNS=N)"
 echo "  OpenClaw host: ${OPENCLAW_HOST:-localhost}"
 echo "  OpenClaw remote activate: ${OPENCLAW_REMOTE_ACTIVATE_CMD:-<none>}"
@@ -186,6 +188,7 @@ export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
 export AGENT_TIMEOUT="${AGENT_TIMEOUT:-240}"
 # Terminal reward weight for success/fail signal.
 export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.3}"
+export PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
 export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
 # Keep judge model name aligned with the served base model path to avoid
@@ -355,6 +358,19 @@ if [ -n "${TOTAL_TRAINING_STEPS}" ]; then
   TOTAL_TRAINING_STEPS_ARG=(trainer.total_training_steps="${TOTAL_TRAINING_STEPS}")
 fi
 
+REWARD_CONFIG_ARGS=()
+if [ "${PINCHBENCH_REWARD_RETURN_MODE}" = "turn" ]; then
+  REWARD_CONFIG_ARGS=(
+    reward.reward_manager.path="${REWARD_MANAGER_PATH}"
+    reward.reward_manager.name=PinchBenchRewardManager
+  )
+else
+  REWARD_CONFIG_ARGS=(
+    reward.custom_reward_function.path="${REWARD_MANAGER_PATH}"
+    reward.custom_reward_function.name=compute_score
+  )
+fi
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="${TRAIN_FILE}" \
@@ -399,8 +415,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
-    reward.custom_reward_function.path="${REWARD_MANAGER_PATH}" \
-    reward.custom_reward_function.name=compute_score \
+    "${REWARD_CONFIG_ARGS[@]}" \
     trainer.critic_warmup=0 \
     trainer.val_before_train=False \
     trainer.logger='["console","tensorboard"]' \
