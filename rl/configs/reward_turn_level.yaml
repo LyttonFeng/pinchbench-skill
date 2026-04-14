@@ -14,7 +14,8 @@ reward:
 
 trainer_integration:
   hydra_keys:
-    reward.reward_manager.path: rl/train/reward_manager.py
+    reward.reward_manager.source: importlib
+    reward.reward_manager.module.path: rl/train/reward_manager.py
     reward.reward_manager.name: PinchBenchRewardManager
   reward_source:
     primary: extra_info.tool_rewards

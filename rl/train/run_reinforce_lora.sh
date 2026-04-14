@@ -361,7 +361,8 @@ fi
 REWARD_CONFIG_ARGS=()
 if [ "${PINCHBENCH_REWARD_RETURN_MODE}" = "turn" ]; then
   REWARD_CONFIG_ARGS=(
-    +reward.reward_manager.path="${REWARD_MANAGER_PATH}"
+    reward.reward_manager.source=importlib
+    reward.reward_manager.module.path="${REWARD_MANAGER_PATH}"
     reward.reward_manager.name=PinchBenchRewardManager
   )
 else

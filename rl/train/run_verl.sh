@@ -82,8 +82,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.use_kl_in_reward=False \
-    +reward.reward_manager.path="${REWARD_MANAGER_PATH}" \
-    +reward.reward_manager.name=PinchBenchRewardManager \
+    reward.reward_manager.source=importlib \
+    reward.reward_manager.module.path="${REWARD_MANAGER_PATH}" \
+    reward.reward_manager.name=PinchBenchRewardManager \
     trainer.critic_warmup=0 \
     trainer.logger='["console"]' \
     trainer.project_name=pinchbench_rl \
