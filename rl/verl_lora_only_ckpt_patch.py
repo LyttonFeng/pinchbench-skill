@@ -48,6 +48,14 @@ def _prune_old_global_steps(actor_local_path: str, max_ckpt_to_keep) -> None:
 
 def apply_patch() -> None:
     from verl.workers import fsdp_workers as fw
+    from verl.single_controller.ray.base import RayWorkerGroup
+
+    if not hasattr(RayWorkerGroup, "save_checkpoint"):
+        def wg_save_checkpoint(self, *args, **kwargs):
+            return self.execute_all_sync("save_checkpoint", *args, **kwargs)
+
+        RayWorkerGroup.save_checkpoint = wg_save_checkpoint
+        print("[pinchbench_lora_only_ckpt] RayWorkerGroup.save_checkpoint patched for veRL compatibility")
 
     cls = fw.ActorRolloutRefWorker
     if getattr(cls, "_pinchbench_lora_only_ckpt_patched", False):
@@ -101,4 +109,3 @@ def apply_patch() -> None:
     cls.save_checkpoint = save_lora_only
     cls._pinchbench_lora_only_ckpt_patched = True
     print("[pinchbench_lora_only_ckpt] ActorRolloutRefWorker.save_checkpoint patched (LoRA only)")
-
