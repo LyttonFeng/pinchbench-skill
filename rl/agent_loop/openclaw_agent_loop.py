@@ -199,6 +199,59 @@ class OpenClawAgentLoop(AgentLoopBase):
         turn_count = 0
         retry_count = 0
 
+        async def _compact_messages_by_turn(
+            messages_in: list[dict[str, Any]],
+            max_prompt_tokens: int,
+            tools: Optional[list[dict]] = None,
+        ) -> list[dict[str, Any]]:
+            """Trim oldest complete turns until the prompt fits the context budget."""
+            if max_prompt_tokens <= 0 or not messages_in:
+                return messages_in
+
+            assistant_indices = [
+                idx for idx, msg in enumerate(messages_in) if msg.get("role") == "assistant"
+            ]
+            if not assistant_indices:
+                return messages_in
+
+            prefix = messages_in[:assistant_indices[0]]
+            turn_starts = assistant_indices[:]
+            candidate = list(messages_in)
+            while turn_starts:
+                prompt_ids = await self.apply_chat_template(candidate, tools=tools)
+                if len(prompt_ids) <= max_prompt_tokens:
+                    return candidate
+
+                drop_start = turn_starts[0]
+                drop_end = turn_starts[1] if len(turn_starts) > 1 else len(candidate)
+                logger.warning(
+                    "[run] Compacting oldest turn: drop messages[%d:%d] to fit %d tokens (current=%d)",
+                    drop_start,
+                    drop_end,
+                    max_prompt_tokens,
+                    len(prompt_ids),
+                )
+                candidate = prefix + candidate[drop_end:]
+                turn_starts = [
+                    idx - drop_end + len(prefix)
+                    for idx in turn_starts[1:]
+                ]
+            return candidate
+
+        def _trim_trajectory_to_last_turns(
+            trajectory: list[dict[str, Any]],
+            keep_assistant_turns: int,
+        ) -> list[dict[str, Any]]:
+            if keep_assistant_turns <= 0 or not trajectory:
+                return trajectory[-1:] if trajectory else []
+            assistant_positions = [
+                idx for idx, msg in enumerate(trajectory) if msg.get("role") == "assistant"
+            ]
+            if len(assistant_positions) <= keep_assistant_turns:
+                return trajectory
+            cut_index = assistant_positions[-keep_assistant_turns]
+            return trajectory[cut_index:]
+
         t_start = time.time()
         openclaw_proc: Optional[asyncio.subprocess.Process] = None
         metrics: dict[str, Any] = {}
@@ -275,6 +328,16 @@ class OpenClawAgentLoop(AgentLoopBase):
                     retry_count = 0
 
                 chat_messages = self._prepare_messages(req.messages, req.tools)
+                max_prompt_tokens = max(
+                    1,
+                    int(getattr(self.rollout_config, "max_prompt_length", 0) or 0),
+                )
+                if max_prompt_tokens > 0:
+                    chat_messages = await _compact_messages_by_turn(
+                        chat_messages,
+                        max_prompt_tokens=max_prompt_tokens,
+                        tools=req.tools,
+                    )
                 try:
                     logger.info("[run] Applying chat template (messages=%d, tools=%s)...", len(chat_messages), bool(req.tools))
                     prompt_token_ids = await self.apply_chat_template(chat_messages, tools=req.tools)
@@ -286,6 +349,8 @@ class OpenClawAgentLoop(AgentLoopBase):
                     break
 
                 if turn_count == 0:
+                    all_prompt_ids = list(prompt_token_ids)
+                elif not all_prompt_ids:
                     all_prompt_ids = list(prompt_token_ids)
 
                 response_length = self.rollout_config.response_length
@@ -358,11 +423,30 @@ class OpenClawAgentLoop(AgentLoopBase):
 
                 total_resp_len = len(all_response_ids)
                 resp_budget = self.rollout_config.response_length
-                logger.info("[run] Accumulated response tokens: %d / %d (%.0f%%)",
-                            total_resp_len, resp_budget, 100 * total_resp_len / resp_budget if resp_budget else 0)
-                if total_resp_len >= resp_budget * 0.85:
-                    logger.warning("Response token budget nearly exhausted (%d/%d), stopping early", total_resp_len, resp_budget)
-                    break
+                if total_resp_len > resp_budget > 0:
+                    logger.warning(
+                        "[run] Response buffer exceeded budget after turn %d (%d > %d); compacting history",
+                        turn_count,
+                        total_resp_len,
+                        resp_budget,
+                    )
+                    compacted = compact_turn_history(
+                        turns=turns,
+                        response_ids=all_response_ids,
+                        response_mask=all_response_mask,
+                        response_logprobs=all_response_logprobs,
+                        max_response_tokens=resp_budget,
+                    )
+                    turns = compacted.turns
+                    all_response_ids = compacted.response_ids
+                    all_response_mask = compacted.response_mask
+                    all_response_logprobs = compacted.response_logprobs
+                    logger.info(
+                        "[run] Compaction dropped %d turns / %d tokens; kept %d tokens",
+                        compacted.dropped_turns,
+                        compacted.dropped_tokens,
+                        len(all_response_ids),
+                    )
 
             if openclaw_proc and openclaw_proc.returncode is None:
                 try:
@@ -387,9 +471,18 @@ class OpenClawAgentLoop(AgentLoopBase):
         terminal_reward = terminal_reward_weight * terminal_reward_raw
 
         trajectory_for_reward = self._transcript_to_messages(transcript_raw) or messages
+        if turns:
+            trajectory_for_reward = _trim_trajectory_to_last_turns(
+                trajectory_for_reward,
+                keep_assistant_turns=len(turns),
+            )
         per_turn_rewards = await self._compute_rewards(
             trajectory_for_reward, terminal_success, task_id, task_prompt,
         )
+        if turns and len(per_turn_rewards) > len(turns):
+            per_turn_rewards = per_turn_rewards[-len(turns):]
+        elif turns and len(per_turn_rewards) < len(turns):
+            per_turn_rewards = [0.0] * (len(turns) - len(per_turn_rewards)) + per_turn_rewards
         # per_turn_rewards already includes terminal_reward on the last turn
         # (added by compute_episode_rewards_async), so do NOT add it again
         total_reward = sum(per_turn_rewards)
