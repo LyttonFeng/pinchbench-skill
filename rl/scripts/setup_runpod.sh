@@ -15,6 +15,11 @@ echo "  RunPod 环境初始化"
 echo "  Stack: PyTorch 2.10 + vLLM ${VLLM_VERSION} + veRL ${VERL_VERSION} + flash-attn ${FLASH_ATTN_VERSION}"
 echo "=============================="
 
+if ! command -v rsync >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y rsync
+fi
+
 # 基础依赖（Ubuntu PEP 668 需 --break-system-packages，与 flash/verl 一致）
 pip install -q --break-system-packages \
     --no-cache-dir \

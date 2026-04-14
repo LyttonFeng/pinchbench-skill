@@ -28,6 +28,10 @@
 #     → flash-attn wheel 必须匹配 torch 版本 + CUDA 版本 + Python 版本
 #     → veRL 最后装，避免它改 torch/vllm 依赖
 #
+#  2b. 系统依赖:
+#      rsync 必须安装在 RunPod 和 ECS 两侧。训练结束后会把 ECS workspace
+#      同步回 RunPod 再 grading；缺 rsync 会让文件型任务被误判为 0。
+#
 #  3. PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 #     → vLLM 0.19 的 CuMemAllocator 会 assert 报错，绝对不能设
 #
@@ -120,6 +124,14 @@ fi
 # ── 2. 安装依赖 ──
 echo ""
 echo "[2/6] 安装 Python 依赖..."
+
+if ! command -v rsync >/dev/null 2>&1; then
+    echo "  安装系统依赖 rsync..."
+    apt-get update
+    apt-get install -y rsync
+else
+    echo "  ✓ rsync 已安装: $(command -v rsync)"
+fi
 
 # 检测已有环境
 TORCH_VER=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "none")
