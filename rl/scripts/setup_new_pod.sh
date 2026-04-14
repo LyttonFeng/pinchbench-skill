@@ -121,6 +121,7 @@ echo "  当前 PyTorch: ${TORCH_VER}"
 if [[ "$TORCH_VER" != 2.10* ]]; then
     echo "  安装 PyTorch 2.10 (cu128)..."
     pip install --break-system-packages \
+        --no-cache-dir \
         torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
         --index-url https://download.pytorch.org/whl/cu128
 else
@@ -131,7 +132,7 @@ fi
 VLLM_VER=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "none")
 if [[ "$VLLM_VER" != "${VLLM_VERSION}" ]]; then
     echo "  安装 vllm ${VLLM_VERSION}..."
-    pip install --break-system-packages "vllm==${VLLM_VERSION}"
+    pip install --break-system-packages --no-cache-dir "vllm==${VLLM_VERSION}"
 else
     echo "  ✓ vLLM 已是 ${VLLM_VERSION}"
 fi
@@ -145,14 +146,16 @@ if [[ "$FA_VER" == "none" ]]; then
     echo "  安装 flash-attn (预编译 wheel, Python ${PY_VER})..."
     if [[ "$PY_VER" == "cp312" ]]; then
         pip install --break-system-packages \
+            --no-cache-dir \
             "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp312-cp312-linux_x86_64.whl"
     elif [[ "$PY_VER" == "cp311" ]]; then
         pip install --break-system-packages \
+            --no-cache-dir \
             "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp311-cp311-linux_x86_64.whl"
     else
         echo "  ⚠ 无匹配的 flash-attn wheel (Python ${PY_VER})"
         echo "  尝试 pip install flash-attn --no-build-isolation ..."
-        pip install --break-system-packages flash-attn --no-build-isolation || echo "  ⚠ flash-attn 安装失败，继续"
+        pip install --break-system-packages --no-cache-dir flash-attn --no-build-isolation || echo "  ⚠ flash-attn 安装失败，继续"
     fi
 else
     echo "  ✓ flash-attn 已安装: ${FA_VER}"
@@ -163,6 +166,7 @@ VERL_VER=$(python3 -c "import verl; print(verl.__version__)" 2>/dev/null || echo
 if [[ "$VERL_VER" != "${VERL_VERSION}" ]]; then
     echo "  安装 verl ${VERL_VERSION} 及其他依赖..."
     pip install --break-system-packages \
+        --no-cache-dir \
         --upgrade \
         "verl==${VERL_VERSION}" \
         peft \
@@ -175,7 +179,7 @@ fi
 # 2e. TensorBoard（veRL logger=tensorboard 时必需；否则无 events 文件）
 if ! python3 -c "import tensorboard" 2>/dev/null; then
     echo "  安装 tensorboard..."
-    pip install --break-system-packages tensorboard
+    pip install --break-system-packages --no-cache-dir tensorboard
 else
     echo "  ✓ tensorboard 已安装"
 fi

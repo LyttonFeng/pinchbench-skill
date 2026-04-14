@@ -15,6 +15,7 @@ echo "=============================="
 
 # 基础依赖（Ubuntu PEP 668 需 --break-system-packages，与 flash/verl 一致）
 pip install -q --break-system-packages \
+    --no-cache-dir \
     "vllm==${VLLM_VERSION}" \
     transformers \
     peft \
@@ -27,9 +28,11 @@ pip install -q --break-system-packages \
 PY_VER=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
 if [[ "$PY_VER" == "cp312" ]]; then
     pip install -q --break-system-packages \
+        --no-cache-dir \
         "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp312-cp312-linux_x86_64.whl"
 elif [[ "$PY_VER" == "cp311" ]]; then
     pip install -q --break-system-packages \
+        --no-cache-dir \
         "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp311-cp311-linux_x86_64.whl"
 else
     echo "Unsupported Python version for flash-attn wheel: ${PY_VER}"
@@ -39,7 +42,7 @@ fi
 # veRL
 # Pin to the latest verified veRL release. It provides the importlib reward
 # manager path used by turn-level rewards.
-pip install -q --break-system-packages --upgrade "verl==${VERL_VERSION}"
+pip install -q --break-system-packages --no-cache-dir --upgrade "verl==${VERL_VERSION}"
 
 echo ""
 echo "验证 GPU..."
