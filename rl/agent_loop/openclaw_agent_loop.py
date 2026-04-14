@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -70,6 +71,17 @@ DEFAULT_WEB_FETCH_SKILLS = (
     "safe-smart-web-fetch",
     "webfetch",
 )
+
+
+def _rsync_bin() -> str:
+    """Resolve rsync in Ray workers whose PATH may not include /usr/bin."""
+    found = shutil.which("rsync")
+    if found:
+        return found
+    fallback = Path("/usr/bin/rsync")
+    if fallback.exists():
+        return str(fallback)
+    return "rsync"
 
 
 def _resolve_pinchbench_dir() -> str:
@@ -732,7 +744,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         if not self.oc_config.pinchbench_dir:
             return
         try:
-            import sys, shutil
+            import sys
             scripts_dir = Path(self.oc_config.pinchbench_dir) / "scripts"
             if str(scripts_dir) not in sys.path:
                 sys.path.insert(0, str(scripts_dir))
@@ -814,7 +826,7 @@ class OpenClawAgentLoop(AgentLoopBase):
                     )
                     return
                 rsync_cmd = [
-                    "rsync",
+                    _rsync_bin(),
                     "-az",
                     "--timeout=60",
                     "-e",
@@ -903,14 +915,23 @@ class OpenClawAgentLoop(AgentLoopBase):
                 ssh_key = self.oc_config.ssh_key or "/root/.ssh/id_ed25519"
                 remote_ws = f"{self.oc_config.workspace_base}/{task_id}/"
                 try:
-                    subprocess.run(
-                        ["rsync", "-az", "--timeout=10",
+                    sync = subprocess.run(
+                        [_rsync_bin(), "-az", "--timeout=10",
                          "-e", f"ssh -o StrictHostKeyChecking=no -i {ssh_key}",
                          f"{self.oc_config.user}@{self.oc_config.host}:{remote_ws}",
                          str(workspace) + "/"],
-                        capture_output=True, timeout=30,
+                        capture_output=True, text=True, timeout=30,
                     )
-                    logger.info("Synced workspace from ECS for %s", task_id)
+                    if sync.returncode != 0:
+                        logger.warning(
+                            "rsync workspace failed for %s: rc=%s stderr=%s stdout=%s",
+                            task_id,
+                            sync.returncode,
+                            sync.stderr.strip(),
+                            sync.stdout.strip(),
+                        )
+                    else:
+                        logger.info("Synced workspace from ECS for %s", task_id)
                 except Exception as e:
                     logger.warning("rsync workspace failed for %s: %s", task_id, e)
 
