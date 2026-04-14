@@ -362,12 +362,12 @@ REWARD_CONFIG_ARGS=()
 if [ "${PINCHBENCH_REWARD_RETURN_MODE}" = "turn" ]; then
   REWARD_CONFIG_ARGS=(
     +reward.reward_manager.path="${REWARD_MANAGER_PATH}"
-    +reward.reward_manager.name=PinchBenchRewardManager
+    reward.reward_manager.name=PinchBenchRewardManager
   )
 else
   REWARD_CONFIG_ARGS=(
     +reward.custom_reward_function.path="${REWARD_MANAGER_PATH}"
-    +reward.custom_reward_function.name=compute_score
+    reward.custom_reward_function.name=compute_score
   )
 fi
 
