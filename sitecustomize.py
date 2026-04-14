@@ -46,5 +46,20 @@ def _maybe_patch_verl_debug_metrics() -> None:
         print(f"[sitecustomize] debug metrics patch skipped: {e}", file=sys.stderr)
 
 
+def _maybe_patch_verl_lora_only_ckpt() -> None:
+    v = os.environ.get("PINCHBENCH_LORA_ONLY_CKPT", "").strip().lower()
+    if v not in ("1", "true", "yes", "on"):
+        return
+    try:
+        from rl.verl_lora_only_ckpt_patch import apply_patch
+
+        apply_patch()
+    except Exception as e:
+        import sys
+
+        print(f"[sitecustomize] LoRA-only checkpoint patch skipped: {e}", file=sys.stderr)
+
+
 _maybe_patch_verl_debug_metrics()
 _maybe_patch_verl_best_ckpt()
+_maybe_patch_verl_lora_only_ckpt()

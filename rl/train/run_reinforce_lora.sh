@@ -99,6 +99,8 @@ MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-12288}"
 # 应让 save_freq 与 test_freq 一致，否则 val 步上没有新 checkpoint，剪枝不会跑、旧目录会堆在盘上。
 PINCHBENCH_BEST_CKPT="${PINCHBENCH_BEST_CKPT:-1}"
 export PINCHBENCH_BEST_CKPT
+PINCHBENCH_LORA_ONLY_CKPT="${PINCHBENCH_LORA_ONLY_CKPT:-0}"
+export PINCHBENCH_LORA_ONLY_CKPT
 PINCHBENCH_KEEP_LATEST_CKPT="${PINCHBENCH_KEEP_LATEST_CKPT:-1}"
 export PINCHBENCH_KEEP_LATEST_CKPT
 # veRL: auto=从 default_local_dir 找最新 ckpt 续训；disable=从头训练（仍建议删掉旧 global_step_* 省盘）
@@ -147,6 +149,7 @@ echo "  Grading judge: ${PINCHBENCH_GRADE_JUDGE_MODEL:-qwen-plus} @ ${PINCHBENCH
 echo "  数据: ${DATA_DIR}"
 echo "  输出: ${OUTPUT_DIR}"
 echo "  pinchbench_best_ckpt: ${PINCHBENCH_BEST_CKPT}  keep_latest_ckpt: ${PINCHBENCH_KEEP_LATEST_CKPT}  save_freq: ${SAVE_FREQ}  test_freq: ${TEST_FREQ}"
+echo "  lora_only_ckpt: ${PINCHBENCH_LORA_ONLY_CKPT}"
 if [ -n "${TOTAL_TRAINING_STEPS}" ]; then
   echo "  trainer.total_training_steps: ${TOTAL_TRAINING_STEPS}  (overrides epoch-based step count)"
 else
