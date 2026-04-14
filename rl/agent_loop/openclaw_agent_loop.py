@@ -386,6 +386,20 @@ class OpenClawAgentLoop(AgentLoopBase):
         reward_at_tokens = self._assign_rewards(
             all_response_ids, all_response_mask, per_turn_rewards, 0.0,
         )
+        if os.environ.get("PINCHBENCH_REWARD_DEBUG", "0").lower() in {"1", "true", "yes", "on"}:
+            reward_nonzero = [
+                (idx, round(value, 4))
+                for idx, value in enumerate(reward_at_tokens)
+                if value != 0.0
+            ]
+            logger.info(
+                "Reward token alignment: task=%s turn_rewards=%s nonzero=%s response_len=%d mask_model_tokens=%d",
+                task_id,
+                per_turn_rewards,
+                reward_nonzero[:20],
+                len(all_response_ids),
+                sum(all_response_mask),
+            )
 
         response_length = self.rollout_config.response_length
 

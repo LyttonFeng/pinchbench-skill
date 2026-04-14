@@ -190,6 +190,15 @@ def _as_float_list(value: Any) -> list[float]:
     return out
 
 
+def _debug_enabled() -> bool:
+    return os.environ.get("PINCHBENCH_REWARD_DEBUG", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 class PinchBenchRewardManager:
     """veRL reward manager that can consume token rewards from AgentLoopOutput.
 
@@ -215,15 +224,18 @@ class PinchBenchRewardManager:
 
         responses = data.batch["responses"]
         reward_tensor = torch.zeros_like(responses, dtype=torch.float32)
+        debug = _debug_enabled()
 
         for i in range(len(data)):
             data_item = data[i]
             extra_info = _extra_info_at(data.non_tensor_batch, i)
             valid_len = _valid_response_length(data_item, responses.shape[-1])
             valid_len = max(0, min(valid_len, responses.shape[-1]))
+            source = "fallback_scalar"
 
             tool_rewards = _as_float_list(extra_info.get("tool_rewards"))
             if tool_rewards:
+                source = "tool_rewards"
                 n = min(valid_len, len(tool_rewards))
                 if n > 0:
                     reward_tensor[i, :n] = torch.tensor(
@@ -231,16 +243,21 @@ class PinchBenchRewardManager:
                         dtype=torch.float32,
                         device=reward_tensor.device,
                     )
+                if debug:
+                    self._log_debug(i, source, valid_len, responses[i], reward_tensor[i], extra_info, len(tool_rewards))
                 continue
 
             turn_scores = _as_float_list(extra_info.get("turn_scores"))
             if turn_scores:
+                source = "turn_scores"
                 self._assign_turn_scores(
                     reward_tensor[i],
                     responses[i],
                     valid_len,
                     turn_scores,
                 )
+                if debug:
+                    self._log_debug(i, source, valid_len, responses[i], reward_tensor[i], extra_info, len(turn_scores))
                 continue
 
             # Fallback keeps the old scalar behavior if a rollout did not carry
@@ -248,6 +265,8 @@ class PinchBenchRewardManager:
             score = float(extra_info.get("total_reward", extra_info.get("reward_score", 0.0)))
             if valid_len > 0:
                 reward_tensor[i, valid_len - 1] = score
+            if debug:
+                self._log_debug(i, source, valid_len, responses[i], reward_tensor[i], extra_info, 1)
 
         if return_dict:
             return {"reward_tensor": reward_tensor}
@@ -289,3 +308,40 @@ class PinchBenchRewardManager:
 
         if n < len(turn_scores):
             row_reward[valid_len - 1] += float(sum(turn_scores[n:]))
+
+    def _log_debug(
+        self,
+        idx: int,
+        source: str,
+        valid_len: int,
+        row_response_ids: Any,
+        row_reward: Any,
+        extra_info: dict[str, Any],
+        source_len: int,
+    ) -> None:
+        nonzero = (row_reward != 0).nonzero(as_tuple=False).flatten().tolist()
+        nonzero = [int(pos) for pos in nonzero]
+        im_end_id = None
+        if self.tokenizer is not None:
+            try:
+                im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+            except Exception:
+                im_end_id = None
+        im_ends: list[int] = []
+        if im_end_id is not None:
+            for pos in range(min(valid_len, int(row_response_ids.shape[-1]))):
+                try:
+                    token_id = int(row_response_ids[pos].item())
+                except Exception:
+                    token_id = int(row_response_ids[pos])
+                if token_id == im_end_id:
+                    im_ends.append(pos)
+
+        task_id = extra_info.get("task_id", "<unknown>")
+        reward_sum = float(row_reward[:valid_len].sum().item()) if valid_len > 0 else 0.0
+        print(
+            "[PinchBenchRewardManager] "
+            f"sample={idx} task={task_id} source={source} valid_len={valid_len} "
+            f"source_len={source_len} nonzero={nonzero[:20]} im_end={im_ends[:20]} "
+            f"reward_sum={reward_sum:.4f} total={extra_info.get('total_reward')}"
+        )
