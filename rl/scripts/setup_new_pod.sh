@@ -32,6 +32,13 @@
 #      rsync 必须安装在 RunPod 和 ECS 两侧。训练结束后会把 ECS workspace
 #      同步回 RunPod 再 grading；缺 rsync 会让文件型任务被误判为 0。
 #
+#  2c. qwen-plus / DashScope judge key:
+#      本机 Mac 的 ~/.pinchbench_env 里有 judge key，不能提交 git。
+#      新 Pod 需要从本机拷贝:
+#        scp -P <POD_PORT> -i ~/.ssh/id_ed25519 ~/.pinchbench_env root@<POD_IP>:/root/.pinchbench_env
+#      训练前:
+#        source /root/.pinchbench_env
+#
 #  3. PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 #     → vLLM 0.19 的 CuMemAllocator 会 assert 报错，绝对不能设
 #
@@ -68,6 +75,8 @@
 #  ECS：公网 IP 会变，运行前在 shell 里 export（勿写死在仓库）：
 #    export ECS_HOST=<阿里云控制台显示的公网 IP>
 #    User/Port 默认 root / 22，可用 ECS_USER / ECS_PORT 覆盖
+#    RunPod 需要用自己的 SSH key 直连 ECS，用于 seed workspace / OpenClaw rollout / rsync grading。
+#    训练时设置 OPENCLAW_HOST / OPENCLAW_USER / OPENCLAW_PORT / OPENCLAW_SSH_KEY。
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 

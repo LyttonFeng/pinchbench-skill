@@ -55,6 +55,43 @@ bash rl/train/run_reinforce_lora.sh
 
 依赖：`verl`、`vllm`、`transformers`、`peft` 等（见脚本头注释）。
 
+### 3.1 qwen-plus / DashScope key
+
+- 本机 Mac 的 `~/.pinchbench_env` 保存了 qwen-plus/DashScope judge key，**不要提交到 git**。
+- 新 RunPod 需要判分时，把它安全拷到 Pod：
+
+```bash
+scp -P POD_PORT -i ~/.ssh/id_ed25519 ~/.pinchbench_env root@POD_IP:/root/.pinchbench_env
+```
+
+- Pod 上启动训练前执行：
+
+```bash
+source /root/.pinchbench_env
+```
+
+- 训练脚本需要这些变量来走 qwen-plus grading，例如：
+
+```bash
+export PINCHBENCH_GRADE_JUDGE_BACKEND=api
+export PINCHBENCH_GRADE_JUDGE_MODEL=qwen-plus
+export PINCHBENCH_GRADE_JUDGE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+```
+
+### 3.2 RunPod 直连 ECS
+
+- OpenClaw runtime 跑在 ECS，veRL/rollout 跑在 RunPod。
+- RunPod 必须能 SSH 到 ECS，才能 seed task workspace、运行 OpenClaw、再用 `rsync` 把 workspace 拉回 RunPod grading。
+- 推荐在 RunPod 生成专用 key，例如 `/root/.ssh/runpod_ed25519`，把 public key 加到 ECS `/root/.ssh/authorized_keys`。
+- 启动训练时显式传：
+
+```bash
+export OPENCLAW_HOST=<ECS_PUBLIC_IP>
+export OPENCLAW_USER=root
+export OPENCLAW_PORT=22
+export OPENCLAW_SSH_KEY=/root/.ssh/runpod_ed25519
+```
+
 ---
 
 ## 4. Checkpoint 结构（为何占几十 GB）
