@@ -48,7 +48,7 @@ rl/
     data.py               # 训练数据加载
   scripts/
     start_vllm.sh         # RunPod 上启动 vLLM serve
-    setup_runpod.sh       # RunPod 环境初始化
+    setup_new_pod.sh      # RunPod 新 Pod 环境初始化（唯一真实入口）
   tasks/                  # 训练专用 task 变体（不污染测试集）
     README.md
 ```
@@ -152,7 +152,8 @@ A_t = r_t - V_φ(h_t)   # critic baseline 降方差
 
 ```bash
 # RunPod 上执行
-bash rl/scripts/setup_runpod.sh
+export ECS_HOST=<阿里云 ECS 公网 IP>
+bash rl/scripts/setup_new_pod.sh
 bash rl/scripts/start_vllm.sh Qwen/Qwen3-4B
 ```
 
