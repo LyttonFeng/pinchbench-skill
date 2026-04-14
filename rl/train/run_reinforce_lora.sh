@@ -164,6 +164,29 @@ if [ ! -f "${TRAIN_FILE}" ]; then
     exit 1
 fi
 
+# veRL 0.7.1 is the latest verified release for this training path. Its reward
+# manager API loads custom managers through source=importlib + module.path.
+python3 - <<'PY'
+from importlib.metadata import version
+from packaging.version import Version
+import inspect
+
+verl_version = Version(version("verl"))
+required = Version("0.7.1")
+if verl_version < required:
+    raise SystemExit(f"ERROR: veRL>={required} is required, got {verl_version}")
+
+from verl.trainer.ppo import reward
+
+source = inspect.getsource(reward.load_reward_manager)
+if "reward_manager_cfg.source" not in source or "importlib" not in source:
+    raise SystemExit(
+        "ERROR: installed veRL does not expose importlib reward manager loading; "
+        "turn-level PinchBenchRewardManager cannot be loaded safely."
+    )
+print(f"Preflight: veRL {verl_version} reward_manager importlib API OK")
+PY
+
 # 训推一致性：8 个 RL 任务在 tasks/*.md 中的 ## Prompt 必须与 benchmark TaskLoader 解析一致
 # （与 prepare_prompts.py 抽取逻辑对齐；失败则不要开训）
 if [ "${PINCHBENCH_SKIP_TRAIN_INFER_PARITY:-0}" != "1" ]; then

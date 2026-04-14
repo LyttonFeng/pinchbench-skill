@@ -72,6 +72,8 @@ REPO_URL="https://github.com/LyttonFeng/pinchbench-skill.git"
 REPO_DIR="/workspace/pinchbench-skill"
 HF_CACHE="/workspace/hf_cache"
 MODEL="Qwen/Qwen3-4B"
+VERL_VERSION="${VERL_VERSION:-0.7.1}"
+VLLM_VERSION="${VLLM_VERSION:-0.19.0}"
 
 echo "══════════════════════════════════════"
 echo "  RunPod 新 Pod 初始化"
@@ -125,13 +127,13 @@ else
     echo "  ✓ PyTorch 已是 2.10"
 fi
 
-# 2b. vLLM 0.19.0
+# 2b. vLLM
 VLLM_VER=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "none")
-if [[ "$VLLM_VER" != "0.19.0" ]]; then
-    echo "  安装 vllm 0.19.0..."
-    pip install --break-system-packages vllm==0.19.0
+if [[ "$VLLM_VER" != "${VLLM_VERSION}" ]]; then
+    echo "  安装 vllm ${VLLM_VERSION}..."
+    pip install --break-system-packages "vllm==${VLLM_VERSION}"
 else
-    echo "  ✓ vLLM 已是 0.19.0"
+    echo "  ✓ vLLM 已是 ${VLLM_VERSION}"
 fi
 
 # 2c. flash-attn: 预编译 wheel，绝对不从源码编译！！！
@@ -158,15 +160,16 @@ fi
 
 # 2d. verl + 其他依赖
 VERL_VER=$(python3 -c "import verl; print(verl.__version__)" 2>/dev/null || echo "none")
-if [[ "$VERL_VER" == "none" ]]; then
-    echo "  安装 verl 及其他依赖..."
+if [[ "$VERL_VER" != "${VERL_VERSION}" ]]; then
+    echo "  安装 verl ${VERL_VERSION} 及其他依赖..."
     pip install --break-system-packages \
-        verl==0.7.1 \
+        --upgrade \
+        "verl==${VERL_VERSION}" \
         peft \
         accelerate \
         "datasets>=3.0"
 else
-    echo "  ✓ veRL 已安装: ${VERL_VER}"
+    echo "  ✓ veRL 已是 ${VERL_VERSION}"
 fi
 
 # 2e. TensorBoard（veRL logger=tensorboard 时必需；否则无 events 文件）

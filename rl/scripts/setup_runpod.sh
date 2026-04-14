@@ -6,13 +6,16 @@
 
 set -euo pipefail
 
+VERL_VERSION="${VERL_VERSION:-0.7.1}"
+VLLM_VERSION="${VLLM_VERSION:-0.19.0}"
+
 echo "=============================="
 echo "  RunPod 环境初始化"
 echo "=============================="
 
 # 基础依赖（Ubuntu PEP 668 需 --break-system-packages，与 flash/verl 一致）
 pip install -q --break-system-packages \
-    vllm \
+    "vllm==${VLLM_VERSION}" \
     transformers \
     peft \
     accelerate \
@@ -34,9 +37,9 @@ else
 fi
 
 # veRL
-# Pin the version that provides verl.experimental.agent_loop.AgentLoopBase,
-# which OpenClawAgentLoop imports.
-pip install -q --break-system-packages verl==0.7.1
+# Pin to the latest verified veRL release. It provides the importlib reward
+# manager path used by turn-level rewards.
+pip install -q --break-system-packages --upgrade "verl==${VERL_VERSION}"
 
 echo ""
 echo "验证 GPU..."
