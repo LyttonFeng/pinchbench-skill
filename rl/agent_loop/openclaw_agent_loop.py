@@ -277,7 +277,7 @@ class OpenClawAgentLoop(AgentLoopBase):
                 chat_messages = self._prepare_messages(req.messages, req.tools)
                 try:
                     logger.info("[run] Applying chat template (messages=%d, tools=%s)...", len(chat_messages), bool(req.tools))
-                    prompt_token_ids = await self.apply_chat_template(chat_messages)
+                    prompt_token_ids = await self.apply_chat_template(chat_messages, tools=req.tools)
                     logger.info("[run] Chat template done, prompt_ids=%d", len(prompt_token_ids))
                 except Exception as e:
                     logger.error("Chat template failed: %s", e)
