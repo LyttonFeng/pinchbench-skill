@@ -135,18 +135,18 @@ else
 fi
 
 # 2c. flash-attn: 预编译 wheel，绝对不从源码编译！！！
-#     匹配: Python 3.12 + PyTorch 2.10 + CUDA 12.x
-#     来源: https://github.com/lesj0610/flash-attention/releases
+#     匹配: Python 3.11/3.12 + PyTorch 2.10 + CUDA 12.x
+#     来源: https://github.com/mjun0812/flash-attention-prebuild-wheels/releases
 FA_VER=$(python3 -c "import flash_attn; print(flash_attn.__version__)" 2>/dev/null || echo "none")
 if [[ "$FA_VER" == "none" ]]; then
     PY_VER=$(python3 -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
     echo "  安装 flash-attn (预编译 wheel, Python ${PY_VER})..."
     if [[ "$PY_VER" == "cp312" ]]; then
         pip install --break-system-packages \
-            "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp312/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
+            "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp312-cp312-linux_x86_64.whl"
     elif [[ "$PY_VER" == "cp311" ]]; then
         pip install --break-system-packages \
-            "https://github.com/lesj0610/flash-attention/releases/download/v2.8.3-cu12-torch2.10-cp311/flash_attn-2.8.3%2Bcu12torch2.10cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
+            "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3%2Bcu128torch2.10-cp311-cp311-linux_x86_64.whl"
     else
         echo "  ⚠ 无匹配的 flash-attn wheel (Python ${PY_VER})"
         echo "  尝试 pip install flash-attn --no-build-isolation ..."
