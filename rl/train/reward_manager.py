@@ -29,6 +29,34 @@ _AGENT_LOOP_DIR = str(Path(__file__).parent.parent / "agent_loop")
 if _AGENT_LOOP_DIR not in sys.path:
     sys.path.insert(0, _AGENT_LOOP_DIR)
 
+# ── Per-task EMA baseline ──────────────────────────────────────────────────────
+# Replaces veRL's global running-mean baseline for multi-task training.
+# Each task maintains its own EMA so task_12 (always 0) doesn't drag down
+# advantage estimates for task_02 (succeeds often), and vice versa.
+# Persists for the lifetime of this process (one training run).
+#
+# PINCHBENCH_TASK_EMA_ALPHA: EMA decay. 0.1 = slow (stable), 0.3 = fast (adapts quickly).
+# PINCHBENCH_TASK_EMA_INIT: initial baseline before first observation. 0.5 is neutral
+#   for {0,+1} rewards; set to 0.0 to be optimistic from the start.
+_task_reward_ema: dict[str, float] = {}
+_TASK_EMA_ALPHA = float(os.environ.get("PINCHBENCH_TASK_EMA_ALPHA", "0.1"))
+_TASK_EMA_INIT = float(os.environ.get("PINCHBENCH_TASK_EMA_INIT", "0.5"))
+
+
+def _normalize_reward(task_id: str, raw_reward: float) -> float:
+    """Return reward centered on this task's EMA baseline, then update EMA.
+
+    Advantage = raw_reward - baseline.
+    - Always-failing task (raw=0, baseline→0): advantage → 0, no gradient.
+    - Newly-succeeding task (raw=1, baseline=0): advantage = +1, strong signal.
+    - Consistently-succeeding task (raw=1, baseline→1): advantage → 0, converged.
+    """
+    if task_id not in _task_reward_ema:
+        _task_reward_ema[task_id] = _TASK_EMA_INIT
+    baseline = _task_reward_ema[task_id]
+    _task_reward_ema[task_id] = (1.0 - _TASK_EMA_ALPHA) * baseline + _TASK_EMA_ALPHA * raw_reward
+    return raw_reward - baseline
+
 
 def compute_score(
     data_source: str,
@@ -49,7 +77,7 @@ def compute_score(
     reward_mode = extra_info.get("reward_mode", os.environ.get("REWARD_MODE", "baseline"))
     task_prompt = extra_info.get("task_prompt", "")
 
-    terminal_reward_raw = 1.0 if terminal_success else -1.0
+    terminal_reward_raw = 1.0 if terminal_success else 0.0  # {0,+1}: no negative gradient for failures
     terminal_reward_weight = float(
         os.environ.get("PINCHBENCH_TERMINAL_REWARD_WEIGHT", "0.3")
     )
@@ -57,7 +85,7 @@ def compute_score(
 
     if reward_mode == "baseline" or not trajectory:
         return {
-            "score": terminal_reward,
+            "score": _normalize_reward(task_id, terminal_reward),
             "total_reward": terminal_reward,
             "terminal_reward": terminal_reward,
             "process_reward": 0.0,
@@ -65,6 +93,7 @@ def compute_score(
             "reward_mode": reward_mode if trajectory else "fallback",
             "task_id": task_id,
             "n_turns": 0,
+            "task_ema_baseline": _task_reward_ema.get(task_id, _TASK_EMA_INIT),
         }
 
     try:
@@ -89,7 +118,7 @@ def compute_score(
         total_process = total_reward - terminal_reward
 
         return {
-            "score": total_reward,
+            "score": _normalize_reward(task_id, total_reward),
             "total_reward": total_reward,
             "terminal_reward": terminal_reward,
             "process_reward": total_process,
@@ -98,11 +127,12 @@ def compute_score(
             "task_id": task_id,
             "n_turns": len(per_turn_rewards),
             "per_turn_rewards": per_turn_rewards,
+            "task_ema_baseline": _task_reward_ema.get(task_id, _TASK_EMA_INIT),
         }
     except Exception as e:
         print(f"[PinchBench reward] Error computing process reward: {e}")
         return {
-            "score": terminal_reward,
+            "score": _normalize_reward(task_id, terminal_reward),
             "total_reward": terminal_reward,
             "terminal_reward": terminal_reward,
             "process_reward": 0.0,
@@ -110,6 +140,7 @@ def compute_score(
             "reward_mode": "error",
             "task_id": task_id,
             "error": str(e),
+            "task_ema_baseline": _task_reward_ema.get(task_id, _TASK_EMA_INIT),
         }
 
 

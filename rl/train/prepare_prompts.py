@@ -126,6 +126,15 @@ def main() -> None:
         "--repeats", type=int, default=1,
         help="How many times to repeat each task in the dataset",
     )
+    parser.add_argument(
+        "--round-robin", action="store_true", default=False,
+        help=(
+            "Interleave tasks in round-robin order: [t0,t1,...,t7] x repeats. "
+            "Ensures each consecutive batch_size window contains diverse tasks "
+            "instead of clustering the same task together. "
+            "Combine with data.shuffle=False in veRL for strict round-robin."
+        ),
+    )
     args = parser.parse_args()
 
     tasks_dir = args.tasks_dir
@@ -149,9 +158,15 @@ def main() -> None:
         sys.exit(1)
 
     rows = []
-    for task in tasks:
+    if args.round_robin:
+        # Interleave: [t0,t1,...,tN] x repeats so consecutive batch windows are diverse.
         for i in range(args.repeats):
-            rows.append(build_verl_row(task, repeat_idx=i))
+            for task in tasks:
+                rows.append(build_verl_row(task, repeat_idx=i))
+    else:
+        for task in tasks:
+            for i in range(args.repeats):
+                rows.append(build_verl_row(task, repeat_idx=i))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 

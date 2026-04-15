@@ -13,7 +13,7 @@
 #
 # 用法：
 #   # Step 1: 准备 prompt 数据
-#   python rl/train/prepare_prompts.py --tasks-dir tasks/ --output-dir rl/data/prompts/
+#   python rl/train/prepare_prompts.py --tasks-dir tasks/ --output-dir rl/data/prompts/ --round-robin
 #
 #   # Step 2: 设置环境变量
 #   export OPENCLAW_HOST=<ECS 公网 IP>    # 以云控制台为准，勿写死在仓库
@@ -81,18 +81,19 @@ MICRO_BATCH="${MICRO_BATCH:-1}"        # 与 batch_size 匹配
 LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
-REWARD_MODE="${REWARD_MODE:-self-judge}"  # baseline / rule / self-judge / oracle-judge
+REWARD_MODE="${REWARD_MODE:-oracle-judge}"  # baseline / rule / self-judge / oracle-judge
 PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE:-scalar}"  # scalar / turn
 # vLLM rollout：OOM 时先降 VLLM_GPU_MEM_UTIL（如 0.22）或 VLLM_MAX_MODEL_LEN（如 16384）
 # 大显存（如 A100 80GB）可酌情调高 VLLM_GPU_MEM_UTIL（如 0.40）以放大 KV 池、略提吞吐。
 # VLLM_MAX_MODEL_LEN 应 ≥ max_prompt + max_response（再加 ~1k～2k 余量）；否则长回复会被截断或报错。
-# 默认 16384+12288=28672；此处给 29696 留约 1k 余量。显存紧张时可降 MAX_RESPONSE_LENGTH 或 VLLM_GPU_MEM_UTIL。
+# 默认 20000+12000=32000；此处用 32768，尽量减少多轮 episode FIFO 裁剪。
+# A100 80G 上建议 VLLM_GPU_MEM_UTIL=0.28，给 actor/ref/update 留余量。
 export VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.28}"
-export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-29696}"
+export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-32768}"
 export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-64}"
 # 数据侧序列上限（加长输出时同步提高 VLLM_MAX_MODEL_LEN）
-MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-16384}"
-MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-12288}"
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-20000}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-12000}"
 
 # Checkpoint 磁盘（RunPod /workspace 常不大；满盘会导致 torch.save zip 报错）
 # 每次保存会写一个目录: ${OUTPUT_DIR}/global_step_{N}/
@@ -116,12 +117,14 @@ TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-auto}"
 # 若设置正整数：覆盖 len(train_dataloader)*total_epochs，精确跑 N 次 PPO 迭代（与 veRL RayPPOTrainer.total_training_steps 一致）
 TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-10}"
-TEST_FREQ="${TEST_FREQ:-1}"
+# 默认每个 epoch 只做一次 validation。当前数据集下 1 个 epoch 约 4 个 step，
+# 因此 test_freq 默认设为 4，避免每 2 个 step 都打断训练。
+TEST_FREQ="${TEST_FREQ:-4}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"    # BEST_CKPT=0 时：只保留最近 N 个 global_step_*
 MAX_CRITIC_CKPT_TO_KEEP="${MAX_CRITIC_CKPT_TO_KEEP:-1}"  # 无 critic 时无影响
 
 if [ "${PINCHBENCH_BEST_CKPT}" = "1" ]; then
-  SAVE_FREQ="${SAVE_FREQ:-2}"
+  SAVE_FREQ="${SAVE_FREQ:-8}"
   HYDRA_MAX_ACTOR_KEEP='trainer.max_actor_ckpt_to_keep=null'
 else
   SAVE_FREQ="${SAVE_FREQ:-20}"
@@ -179,7 +182,7 @@ echo "=============================="
 # 检查 prompt 数据
 if [ ! -f "${TRAIN_FILE}" ]; then
     echo "训练数据不存在: ${TRAIN_FILE}"
-    echo "请先运行: python rl/train/prepare_prompts.py"
+    echo "请先运行: python rl/train/prepare_prompts.py --tasks-dir tasks/ --output-dir rl/data/prompts/ --round-robin"
     exit 1
 fi
 
@@ -230,7 +233,8 @@ export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
 # Give OpenClaw more time to respond before treating turn 0 as a dead session.
 export AGENT_TIMEOUT="${AGENT_TIMEOUT:-240}"
 # Terminal reward weight for success/fail signal.
-export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.3}"
+# 提高 terminal 权重，避免 process reward 过度主导长轨迹优化。
+export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.5}"
 export PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
 export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
