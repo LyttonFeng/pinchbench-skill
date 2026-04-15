@@ -819,7 +819,7 @@ async def compute_episode_rewards_async(
     Returns:
         List of rewards, one per assistant turn. Terminal reward added to last.
     """
-    terminal_reward_raw = 1.0 if terminal_success else -1.0
+    terminal_reward_raw = 1.0 if terminal_success else 0.0  # {0,+1}: no negative gradient for failures
     terminal_reward = TERMINAL_REWARD_WEIGHT * terminal_reward_raw
 
     assistant_indices = [
@@ -904,7 +904,7 @@ def compute_episode_rewards(
 
     For modes requiring LLM calls, uses sync HTTP.
     """
-    terminal_reward_raw = 1.0 if terminal_success else -1.0
+    terminal_reward_raw = 1.0 if terminal_success else 0.0  # {0,+1}: no negative gradient for failures
     terminal_reward = TERMINAL_REWARD_WEIGHT * terminal_reward_raw
 
     assistant_indices = [
@@ -977,4 +977,4 @@ def compute_score(
     if extra_info is None:
         extra_info = {}
     terminal_success = bool(extra_info.get("terminal_success", False))
-    return 1.0 if terminal_success else -1.0
+    return 1.0 if terminal_success else 0.0  # {0,+1}: no negative gradient for failures
