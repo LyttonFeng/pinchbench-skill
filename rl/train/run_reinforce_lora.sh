@@ -438,7 +438,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr="${LR}" \
     actor_rollout_ref.actor.ppo_mini_batch_size="${BATCH_SIZE}" \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu="${MICRO_BATCH}" \
-    actor_rollout_ref.actor.ppo_epochs=2 \
+    actor_rollout_ref.actor.ppo_epochs=1 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.05 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
