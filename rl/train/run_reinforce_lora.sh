@@ -63,6 +63,14 @@ N_GPUS="${VERL_N_GPUS:-1}"
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 # 使用 SDPA 代替 FlashAttention2（避免 flash_attn 包兼容性问题）
 export ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
+# Ray 在部分 RunPod 容器里会看到宿主机级别的 CPU 数（例如 128），导致预启动
+# 过多 Python workers；同时 dashboard/OpenBLAS 可能为每个进程开大量线程。
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+export RAY_DISABLE_DASHBOARD="${RAY_DISABLE_DASHBOARD:-1}"
+RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
 # 注意: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 与 vLLM 0.19 的 CuMemAllocator 不兼容
 # vLLM 用量统计：部分容器里 py-cpuinfo 会触发 JSONDecodeError（_report_usage_worker 后台线程，一般不影响推理）
 export VLLM_NO_USAGE_STATS="${VLLM_NO_USAGE_STATS:-1}"
@@ -161,6 +169,7 @@ if [ "${PINCHBENCH_BEST_CKPT}" != "1" ]; then
 fi
 echo "  tensorboard: ${TENSORBOARD_DIR}  (需: pip install tensorboard)"
 echo "  vLLM: gpu_memory_utilization=${VLLM_GPU_MEM_UTIL} max_model_len=${VLLM_MAX_MODEL_LEN} max_num_seqs=${VLLM_MAX_NUM_SEQS}"
+echo "  Ray: num_cpus=${RAY_NUM_CPUS} disable_dashboard=${RAY_DISABLE_DASHBOARD} blas_threads=${OPENBLAS_NUM_THREADS}"
 echo "  序列: max_prompt_length=${MAX_PROMPT_LENGTH} max_response_length=${MAX_RESPONSE_LENGTH}"
 if [ "$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))" -gt "${VLLM_MAX_MODEL_LEN}" ]; then
   echo "  WARN: max_prompt+max_response 大于 VLLM_MAX_MODEL_LEN，请提高 VLLM_MAX_MODEL_LEN 或降低 prompt/response 上限"
@@ -455,6 +464,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.val_before_train=False \
     trainer.logger='["console","tensorboard"]' \
+    ray_kwargs.ray_init.num_cpus="${RAY_NUM_CPUS}" \
+    +ray_kwargs.ray_init.include_dashboard=False \
     trainer.project_name=pinchbench_rl \
     trainer.experiment_name="${EXPERIMENT_NAME}" \
     trainer.n_gpus_per_node="${N_GPUS}" \

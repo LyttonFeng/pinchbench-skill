@@ -72,6 +72,28 @@
 #       再 bash rl/scripts/prune_old_ckpts.sh（有 best_ckpt_state.json 则只留最佳步）
 #     → run_reinforce_lora.sh: 默认 PINCHBENCH_BEST_CKPT=1 会按 val 只留最佳；否则可调 save_freq / max_actor_ckpt
 #
+#  10. 训练数据必须先生成
+#     → run_reinforce_lora.sh 会先检查 rl/data/prompts/train.parquet / val.parquet
+#     → 如果没先运行 prepare_prompts.py，训练会在启动阶段直接退出
+#     → 正确顺序:
+#        python3 rl/train/prepare_prompts.py --tasks-dir tasks/ --output-dir rl/data/prompts/
+#        bash rl/train/run_reinforce_lora.sh
+#
+#  11. RunPod CPU 识别可能虚高，Ray 必须限 CPU
+#     → RunPod 面板可能显示 16 vCPU，但容器内 os.cpu_count()/nproc 可能返回 128
+#     → Ray 会按这个数预启动 Python workers，导致:
+#        worker_pool.cc: Some workers ... have not registered within the timeout
+#        OpenBLAS blas_thread_init: pthread_create failed
+#     → 训练前必须限制:
+#        export RAY_NUM_CPUS=8
+#        export OMP_NUM_THREADS=1
+#        export OPENBLAS_NUM_THREADS=1
+#        export MKL_NUM_THREADS=1
+#        export NUMEXPR_NUM_THREADS=1
+#     → run_reinforce_lora.sh 已默认写入这些限制，并传:
+#        ray_kwargs.ray_init.num_cpus=${RAY_NUM_CPUS}
+#        +ray_kwargs.ray_init.include_dashboard=False
+#
 #  ECS：公网 IP 会变，运行前在 shell 里 export（勿写死在仓库）：
 #    export ECS_HOST=<阿里云控制台显示的公网 IP>
 #    User/Port 默认 root / 22，可用 ECS_USER / ECS_PORT 覆盖
