@@ -52,6 +52,38 @@ if not logger.handlers:
     _h.setLevel(logging.DEBUG)
     logger.addHandler(_h)
 
+# ── Per-task EMA baseline for turn rewards ────────────────────────────────────
+# Mirrors the same logic in reward_manager.py but lives here because
+# turn-reward normalization must happen before token assignment, in this process.
+# The two EMA dicts are independent (different Ray workers) but converge similarly.
+_turn_task_ema: dict[str, float] = {}
+_TURN_EMA_ALPHA = float(os.environ.get("PINCHBENCH_TASK_EMA_ALPHA", "0.1"))
+_TURN_EMA_INIT = float(os.environ.get("PINCHBENCH_TASK_EMA_INIT", "0.5"))
+
+
+def _normalize_turn_rewards(task_id: str, per_turn_rewards: list[float]) -> list[float]:
+    """Center per-turn rewards around this task's EMA baseline.
+
+    Subtracts baseline/n from every turn so the episode sum = raw_total - baseline.
+    - Always-failing task (raw_total → 0, baseline → 0): advantage → 0, no gradient.
+    - Improving task (raw_total > baseline): positive advantages, learning signal.
+    - Consistently high task (raw_total ≈ baseline): advantages → 0, converged.
+    """
+    if not per_turn_rewards:
+        return per_turn_rewards
+    raw_total = sum(per_turn_rewards)
+    if task_id not in _turn_task_ema:
+        _turn_task_ema[task_id] = _TURN_EMA_INIT
+    baseline = _turn_task_ema[task_id]
+    _turn_task_ema[task_id] = (1.0 - _TURN_EMA_ALPHA) * baseline + _TURN_EMA_ALPHA * raw_total
+    baseline_per_turn = baseline / len(per_turn_rewards)
+    normalized = [r - baseline_per_turn for r in per_turn_rewards]
+    logger.debug(
+        "[EMA] task=%s raw_total=%.3f baseline=%.3f baseline_per_turn=%.3f normalized_sum=%.3f",
+        task_id, raw_total, baseline, baseline_per_turn, sum(normalized),
+    )
+    return normalized
+
 DEFAULT_WEB_SEARCH_SKILLS = (
     "web_search",
     "ddg-search",
@@ -484,7 +516,10 @@ class OpenClawAgentLoop(AgentLoopBase):
         elif turns and len(per_turn_rewards) < len(turns):
             per_turn_rewards = [0.0] * (len(turns) - len(per_turn_rewards)) + per_turn_rewards
         # per_turn_rewards already includes terminal_reward on the last turn
-        # (added by compute_episode_rewards_async), so do NOT add it again
+        # (added by compute_episode_rewards_async), so do NOT add it again.
+        # Normalize per-task EMA so tasks with different success rates don't
+        # pollute each other's advantage estimates via the global veRL baseline.
+        per_turn_rewards = _normalize_turn_rewards(task_id, per_turn_rewards)
         total_reward = sum(per_turn_rewards)
         process_reward = total_reward - terminal_reward
         logger.info(
