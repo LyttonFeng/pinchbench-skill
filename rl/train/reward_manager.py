@@ -293,7 +293,10 @@ class PinchBenchRewardManager:
 
             # Fallback keeps the old scalar behavior if a rollout did not carry
             # turn-level rewards, e.g. an error path or an older agent loop.
-            score = float(extra_info.get("total_reward", extra_info.get("reward_score", 0.0)))
+            # Apply per-task EMA normalization so fallback path is consistent with scalar mode.
+            task_id = extra_info.get("task_id", "")
+            raw_score = float(extra_info.get("total_reward", extra_info.get("reward_score", 0.0)))
+            score = _normalize_reward(task_id, raw_score) if task_id else raw_score
             if valid_len > 0:
                 reward_tensor[i, valid_len - 1] = score
             if debug:

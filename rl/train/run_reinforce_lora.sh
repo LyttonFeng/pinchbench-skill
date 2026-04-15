@@ -82,7 +82,7 @@ LORA_RANK="${LORA_RANK:-32}"
 LORA_ALPHA="${LORA_ALPHA:-64}"
 LR="${LR:-2e-5}"
 REWARD_MODE="${REWARD_MODE:-oracle-judge}"  # baseline / rule / self-judge / oracle-judge
-PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE:-scalar}"  # scalar / turn
+PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE:-turn}"  # scalar / turn
 # vLLM rollout：OOM 时先降 VLLM_GPU_MEM_UTIL（如 0.22）或 VLLM_MAX_MODEL_LEN（如 16384）
 # 大显存（如 A100 80GB）可酌情调高 VLLM_GPU_MEM_UTIL（如 0.40）以放大 KV 池、略提吞吐。
 # VLLM_MAX_MODEL_LEN 应 ≥ max_prompt + max_response（再加 ~1k～2k 余量）；否则长回复会被截断或报错。
