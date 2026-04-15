@@ -166,7 +166,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         """
         self._ensure_pinchbench_dir()
         from .model_proxy import ModelProxy, ModelRequest
-        from .trajectory import TrajectoryReconstructor, TurnRecord
+        from .trajectory import TrajectoryReconstructor, TurnRecord, compact_turn_history
 
         print(f"[OpenClawAgentLoop.run] START kwargs keys={list(kwargs.keys())}", flush=True)
         logger.info("[run] START kwargs keys=%s, sampling_params=%s", list(kwargs.keys()), sampling_params)
