@@ -66,104 +66,23 @@ PinchBench-RL8 从 PinchBench 中筛选了 8 个典型任务，覆盖工具调�
 
 下表使用 HTML，在预览里**尽量占满可视宽度**；窄屏会出现横向滚动条。纯 Markdown 表无法设宽度。
 
-<div style="overflow-x: auto; width: 100%; max-width: 100%;">
 
-<table width="100%" border="1" cellpadding="10" cellspacing="0" style="min-width: 720px; border-collapse: collapse; table-layout: fixed;">
-<colgroup>
-  <col style="width: 22%;" />
-  <col style="width: 10%;" />
-  <col style="width: 14%;" />
-  <col style="width: 14%;" />
-  <col style="width: 20%;" />
-  <col style="width: 12%;" />
-</colgroup>
-<thead>
-<tr>
-<th align="left">任务</th>
-<th align="center">典型 turns</th>
-<th align="center">qwen-plus（上限）</th>
-<th align="center">Qwen3-4B baseline</th>
-<th align="center">Qwen3-4B + LoRA（2-step-only）</th>
-<th align="center">相对 baseline（pp）</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>task_02_stock</td>
-<td align="center">5</td>
-<td align="center">100%</td>
-<td align="center">67%</td>
-<td align="center">92%</td>
-<td align="center"><strong>+25.0</strong></td>
-</tr>
-<tr>
-<td>task_10_workflow</td>
-<td align="center">3</td>
-<td align="center">87.9%</td>
-<td align="center">33%</td>
-<td align="center">77%</td>
-<td align="center"><strong>+44.0</strong></td>
-</tr>
-<tr>
-<td>task_12_skill_search</td>
-<td align="center">16</td>
-<td align="center">100%</td>
-<td align="center">0%</td>
-<td align="center">17%</td>
-<td align="center"><strong>+17.0</strong></td>
-</tr>
-<tr>
-<td>task_16_email_triage</td>
-<td align="center">3</td>
-<td align="center">89.1%</td>
-<td align="center">39%</td>
-<td align="center">89%</td>
-<td align="center"><strong>+50.0</strong></td>
-</tr>
-<tr>
-<td>task_18_market_research</td>
-<td align="center">3</td>
-<td align="center">88.0%</td>
-<td align="center">34%</td>
-<td align="center">79%</td>
-<td align="center"><strong>+45.0</strong></td>
-</tr>
-<tr>
-<td>task_18_spreadsheet_summary</td>
-<td align="center">3</td>
-<td align="center">97.5%</td>
-<td align="center">20%</td>
-<td align="center">2.5%</td>
-<td align="center"><strong>-17.5</strong></td>
-</tr>
-<tr>
-<td>task_22_second_brain</td>
-<td align="center">4</td>
-<td align="center">100%</td>
-<td align="center">0%</td>
-<td align="center">100%</td>
-<td align="center"><strong>+100.0</strong></td>
-</tr>
-<tr>
-<td>task_24_polymarket_briefing</td>
-<td align="center">9</td>
-<td align="center">58.3%</td>
-<td align="center">12%</td>
-<td align="center">54%</td>
-<td align="center"><strong>+42.0</strong></td>
-</tr>
-<tr>
-<td><strong>总分</strong></td>
-<td align="center">—</td>
-<td align="center"><strong>90.1%</strong></td>
-<td align="center"><strong>50.4%</strong></td>
-<td align="center"><strong>66.0%</strong></td>
-<td align="center"><strong>+15.6</strong></td>
-</tr>
-</tbody>
-</table>
 
-</div>
+
+| 任务                          | 典型 turns | qwen-plus | Qwen3-4B baseline | + LoRA（2-step-only） | 相对提升       |
+| --------------------------- | -------- | --------- | ----------------- | ------------------- | ---------- |
+| task_02_stock               | 5        | 100%      | 67%               | 92%                 | **+25.0**  |
+| task_10_workflow            | 3        | 87.9%     | 33%               | 77%                 | **+44.0**  |
+| task_12_skill_search        | 16       | 100%      | 0%                | 17%                 | **+17.0**  |
+| task_16_email_triage        | 3        | 89.1%     | 39%               | 89%                 | **+50.0**  |
+| task_18_market_research     | 3        | 88.0%     | 34%               | 79%                 | **+45.0**  |
+| task_18_spreadsheet_summary | 3        | 97.5%     | 20%               | 2.5%                | **-17.5**  |
+| task_22_second_brain        | 4        | 100%      | 0%                | 100%                | **+100.0** |
+| task_24_polymarket_briefing | 9        | 58.3%     | 12%               | 54%                 | **+42.0**  |
+| **总分**                      | —        | **90.1%** | **50.4%**         | **66.0%**           | **+15.6**  |
+
+
+
 
 「典型 turns」与上文 **RL8 任务集概览** 中 run 0057 baseline 的 **实际 turns** 一致；任务能力说明见该表「核心能力」列。
 
