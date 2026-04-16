@@ -114,9 +114,9 @@ export PINCHBENCH_LORA_ONLY_CKPT
 PINCHBENCH_KEEP_LATEST_CKPT="${PINCHBENCH_KEEP_LATEST_CKPT:-1}"
 export PINCHBENCH_KEEP_LATEST_CKPT
 # veRL: auto=从 default_local_dir 找最新 ckpt 续训；disable=从头训练（仍建议删掉旧 global_step_* 省盘）
-TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-auto}"
+TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-disable}"
 # 若设置正整数：覆盖 len(train_dataloader)*total_epochs，精确跑 N 次 PPO 迭代（与 veRL RayPPOTrainer.total_training_steps 一致）
-TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-}"
+TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-8}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-10}"
 # 默认每个 epoch 只做一次 validation。当前数据集下 1 个 epoch 约 4 个 step，
 # 因此 test_freq 默认设为 4，避免每 2 个 step 都打断训练。
@@ -235,7 +235,7 @@ export OPENCLAW_REMOTE_ACTIVATE_CMD="${OPENCLAW_REMOTE_ACTIVATE_CMD:-}"
 export AGENT_TIMEOUT="${AGENT_TIMEOUT:-240}"
 # Terminal reward weight for success/fail signal.
 # 提高 terminal 权重，避免 process reward 过度主导长轨迹优化。
-export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.5}"
+export PINCHBENCH_TERMINAL_REWARD_WEIGHT="${PINCHBENCH_TERMINAL_REWARD_WEIGHT:-0.7}"
 export PINCHBENCH_REWARD_RETURN_MODE="${PINCHBENCH_REWARD_RETURN_MODE}"
 # PRM self-judge 走 RunPod 本地 vLLM（和 agent 共享同一个模型）
 export PRM_VLLM_BASE_URL="${PRM_VLLM_BASE_URL:-http://localhost:8000/v1}"
@@ -465,7 +465,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.agent.num_workers=1 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
-    algorithm.use_kl_in_reward=False \
+    algorithm.use_kl_in_reward=True \
     "${REWARD_CONFIG_ARGS[@]}" \
     trainer.critic_warmup=0 \
     trainer.val_before_train=False \

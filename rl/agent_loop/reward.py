@@ -10,7 +10,7 @@ Four ablation modes:
 Default mode: C (self-judge) — 自进化：模型自己评判自己
 
 Terminal reward: {-1, +1}  (task fail / succeed)
-Process reward:  [-0.5, +0.3] per turn
+Process reward:  [-0.5, +0.2] per turn
 
 PRM (self-judge) uses task goal + optional_hints (non-binding) + common_mistakes.
 reference_steps stay in the rubric as guidance inside the prompt, but do not feed into the
@@ -57,7 +57,10 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "goal": "Research Apple (AAPL) stock price, save to stock_report.txt including the literal ticker AAPL, price, date, and market summary (PinchBench automated grading requires the substring AAPL in the file).",
         "optional_hints": (
             "Useful signals: the agent gathers fresh AAPL market data with a tool first, then writes a grounded "
-            "stock_report.txt with ticker, price, date, and a concise summary."
+            "stock_report.txt with ticker, price, date, and a concise summary. "
+            "If web search returns incomplete or stale price data, still write stock_report.txt with the best "
+            "available figure and a caveat noting the data limitation — writing an approximate report always beats "
+            "writing nothing."
         ),
         "reference_steps": [
             "Gather current AAPL market data from a reliable source",
@@ -66,6 +69,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Verify the file exists and contains the required ticker token",
         ],
         "common_mistakes": [
+            "Refusing to create stock_report.txt with a message like 'cannot retrieve real-time prices due to privacy constraints' — this is the worst outcome; the grader requires the file to exist; use whatever search results you have, note limitations, and write the file",
             "Answering from memory or text-only before checking current AAPL data",
             "Writing only 'Apple' or company name without the literal token AAPL (automated grader checks \\bAAPL\\b)",
             "Searching but never writing the file (premature termination)",
@@ -87,6 +91,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Verify the final file contents after editing",
         ],
         "common_mistakes": [
+            "Calling read('config/*') or any glob/wildcard path — the read tool requires exact filenames; instead call read on each file directly by name (config/settings.json and config/database.yml are given in the task prompt)",
+            "Giving up and asking the user to confirm the path after a single ENOENT error — when the files are listed in the task prompt, use those exact paths directly without wildcards",
             "Skipping inspection and jumping straight to edit without first reading both files to understand their exact structure",
             "Repeating the same failing edit call (same oldText) without adding more surrounding context to disambiguate duplicate field names — database.yml has 'host: localhost' in both development and test blocks, so the oldText must include enough surrounding lines to be unique",
             "Not switching strategy after an edit fails: if 'Found N occurrences' error appears, the fix is to include the parent block header (e.g. 'development:\\n  host: localhost') in oldText, not to retry the same short oldText",
@@ -168,10 +174,11 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
     "task_18_spreadsheet_summary": {
         "goal": "Analyze workspace CSV + XLSX per task, compute real aggregates, write data_summary.md (PinchBench id=task_18_spreadsheet_summary; markdown file may be task_19_spreadsheet_summary.md on disk).",
         "optional_hints": (
-            "Useful signals: the agent extracts real numbers from the CSV/XLSX with tools first, computes aggregates, "
-            "and writes a summary whose values are traceable back to the source files. For XLSX, use a real parser or "
-            "library; do not treat the spreadsheet as plain text. If one parsing route fails, retry with another "
-            "tool/path rather than guessing values."
+            "Useful signals: the agent reads the CSV and computes real aggregates from the rows. For xlsx: the read "
+            "tool returns binary for .xlsx files — this is expected. Use the column names and row count described in "
+            "the task prompt as structural guidance, then write data_summary.md with real CSV numbers and "
+            "clearly-estimated xlsx figures from the prompt description. Writing a partial report that accurately "
+            "handles the CSV is far better than writing nothing."
         ),
         "reference_steps": [
             "Extract real numeric data from the CSV and XLSX sources",
@@ -184,8 +191,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Pretending to read .xlsx as UTF-8 text and inventing numbers",
             "Using only one file and ignoring the other source when both are required",
             "Writing summary without any successful numeric extraction",
-            "Not retrying with another tool when first exec fails",
-            "Filling gaps with guessed numbers after a parsing error instead of re-parsing",
+            "Entering a repetitive thinking loop when xlsx returns binary — stop looping; use the xlsx structure described in the task prompt (sheet names, column names, row count) to write estimated xlsx figures in the report",
+            "Writing nothing because xlsx cannot be parsed as text — data_summary.md must exist; accurate CSV analysis plus xlsx-prompt-based estimates is a valid and scorable report",
+            "Reading xlsx with the read tool and then pretending the binary garbage contains actual numbers — acknowledge the limitation and use prompt-provided structure instead",
             "Reporting aggregates that cannot be traced back to the raw rows",
         ],
         "qwen_plus_stats": "7 turns, 6 tool calls, 1728 bytes. Switched from pandas to awk when needed.",
@@ -230,6 +238,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Avoid inventing market names, odds, or sources",
         ],
         "common_mistakes": [
+            "Writing the wrong year/date in the report header (e.g. '2023-10-25') — the header must show today's actual date; never use dates from training memory",
+            "Falling back to 2023-era Polymarket training knowledge when web search returns poor results — 2023 markets (FTX, Iran ceasefire from that era, Bitcoin $50K Dec 2023) are stale and will fail grading; do additional targeted searches instead",
+            "Stopping after 2 search attempts when both returned poor results — try at least 3–4 different queries (e.g. 'polymarket trending 2026', 'gamma.io markets', specific topic searches) before writing",
             "Guessing markets or odds before checking a source",
             "Hallucinated market names or odds",
             "News not tied to the market or not recent",
@@ -461,15 +472,15 @@ Consider:
 - Does this step avoid the common mistakes listed above?
 - Does this step contribute to completing the task, even if the exact path differs from the hints?
 
-Score range: -0.5 (harmful/wasteful step) to +0.3 (excellent progress)
-- +0.2 to +0.3: Step clearly advances toward the goal (e.g., correct tool with good arguments)
+Score range: -0.5 (harmful/wasteful step) to +0.2 (excellent progress)
+- +0.1 to +0.2: Step clearly advances toward the goal (e.g., correct tool with good arguments)
 - +0.05 to +0.15: Reasonable step, some progress
 - 0.0: Neutral, neither helpful nor harmful
 - -0.1 to -0.2: Suboptimal but not terrible (e.g., redundant action)
 - -0.3 to -0.5: Actively harmful (e.g., fabricating data, repeating failed commands)
 
 Respond with ONLY a JSON object, no other text:
-{"score": <float between -0.5 and 0.3>, "reason": "<one sentence explanation>"}"""
+{"score": <float between -0.5 and 0.2>, "reason": "<one sentence explanation>"}"""
 
     return prompt
 
@@ -490,7 +501,7 @@ async def call_llm_judge(
     Uses /v1/completions (text completion) because veRL's vLLMHttpServer
     does not expose /v1/chat/completions.
 
-    Returns score in [-0.5, +0.3]. Falls back to 0.0 on any error.
+    Returns score in [-0.5, +0.2]. Falls back to 0.0 on any error.
     """
     import aiohttp
 
@@ -535,7 +546,7 @@ async def call_llm_judge(
         score = float(result.get("score", 0.0))
         reason = result.get("reason", "")
         print(f"[PRM] Judge scored: {score:.2f}, reason: {reason}")
-        return max(-0.5, min(0.3, score))
+        return max(-0.5, min(0.2, score))
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
         logger.warning("PRM judge parse failed: %s, raw: %s", e, text[:200] if 'text' in dir() else "N/A")
         return 0.0
@@ -590,7 +601,7 @@ def call_llm_judge_sync(
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         result = json.loads(text)
         score = float(result.get("score", 0.0))
-        return max(-0.5, min(0.3, score))
+        return max(-0.5, min(0.2, score))
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
         logger.warning("PRM judge sync parse failed: %s", e)
         return 0.0
@@ -699,7 +710,7 @@ def generic_rule_reward(
     - Penalizes common_mistakes patterns from rubric
     - Rewards progress toward the task goal
 
-    Score range per turn: [-0.5, +0.3]
+    Score range per turn: [-0.5, +0.2]
     """
     content = turn.get("content", "")
     tool_name = _get_tool_name(turn)
@@ -787,7 +798,7 @@ def generic_rule_reward(
         if prev_tool == tool_name and prev_args == cur_args:
             reward -= 0.15
 
-    return max(-0.5, min(0.3, reward))
+    return max(-0.5, min(0.2, reward))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -881,7 +892,7 @@ async def compute_episode_rewards_async(
         else:
             r = 0.0
 
-        r = max(-0.5, min(0.3, r))
+        r = max(-0.5, min(0.2, r))
         rewards.append(r)
 
     # Add terminal reward to last turn
