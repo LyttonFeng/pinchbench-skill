@@ -94,6 +94,35 @@
 #        ray_kwargs.ray_init.num_cpus=${RAY_NUM_CPUS}
 #        +ray_kwargs.ray_init.include_dashboard=False
 #
+#  12. RL8 benchmark 在 Mac 本地跑，不在 RunPod 内跑
+#     → RunPod 只负责启动 vLLM/LoRA 推理服务。
+#     → Mac 侧需要先建 SSH tunnel，再执行 scripts/run_bench_rl8_lora.sh。
+#     → 示例:
+#        ssh -N -o ServerAliveInterval=30 -L 127.0.0.1:18015:127.0.0.1:8015 \
+#          root@<POD_IP> -p <POD_PORT> -i ~/.ssh/id_ed25519
+#        BASE_URL=http://127.0.0.1:18015/v1 MODEL=pinchbench-lora bash scripts/run_bench_rl8_lora.sh
+#
+#  13. LoRA vLLM benchmark 必须启用 OpenClaw tool-call parser
+#     → 只要 /v1/models 可访问，不代表 RL8 benchmark 有效。
+#     → OpenClaw 会发送 tool_choice=auto；如果 vLLM 没开 tool parser，所有任务会报:
+#        "auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set
+#     → 这种 benchmark 结果无效，即使 JSON 分数已经生成。
+#     → 启动 LoRA vLLM 至少需要包含:
+#        --enable-lora
+#        --lora-modules pinchbench-lora=/path/to/global_step_N/actor/lora_adapter
+#        --enable-auto-tool-choice
+#        --tool-call-parser hermes
+#     → 示例:
+#        python -m vllm.entrypoints.openai.api_server \
+#          --model Qwen/Qwen3-4B \
+#          --served-model-name Qwen/Qwen3-4B Qwen3-4B \
+#          --host 0.0.0.0 --port 8021 \
+#          --max-model-len 32768 --gpu-memory-utilization 0.55 \
+#          --trust-remote-code --dtype bfloat16 \
+#          --enable-lora --max-loras 4 --max-lora-rank 32 \
+#          --lora-modules pinchbench-lora=/workspace/pinchbench-skill/rl/checkpoints/reinforce_lora/global_step_8/actor/lora_adapter \
+#          --enable-auto-tool-choice --tool-call-parser hermes
+#
 #  ECS：公网 IP 会变，运行前在 shell 里 export（勿写死在仓库）：
 #    export ECS_HOST=<阿里云控制台显示的公网 IP>
 #    User/Port 默认 root / 22，可用 ECS_USER / ECS_PORT 覆盖

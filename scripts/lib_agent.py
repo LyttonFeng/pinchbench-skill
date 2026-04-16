@@ -43,7 +43,7 @@ def _patch_openclaw_agent_disable_model_fallbacks(agent_id: str, model_id: str) 
     \"Continue where you left off...\" (see openclaw dist/agent-command attempt-execution), which
     breaks PinchBench. Forcing `fallbacks: []` on this agent disables that chain.
     """
-    path = Path.home() / ".openclaw" / "openclaw.json"
+    path = _get_openclaw_home() / "openclaw.json"
     if not path.is_file():
         logger.warning("Cannot patch OpenClaw config (missing %s); model fallbacks may still apply.", path)
         return
@@ -103,6 +103,8 @@ class ModelValidationError(Exception):
 
 MAX_OPENCLAW_MESSAGE_CHARS = int(os.environ.get("PINCHBENCH_MAX_MSG_CHARS", "8000"))
 JUDGE_MAX_MSG_CHARS = int(os.environ.get("PINCHBENCH_JUDGE_MAX_MSG_CHARS", "3000"))
+OPENCLAW_CONTEXT_WINDOW = int(os.environ.get("PINCHBENCH_OPENCLAW_CONTEXT_WINDOW", "32768"))
+OPENCLAW_MAX_TOKENS = int(os.environ.get("PINCHBENCH_OPENCLAW_MAX_TOKENS", "8192"))
 
 
 def _coerce_subprocess_output(value: Any) -> str:
@@ -375,7 +377,7 @@ def ensure_agent_exists(
     bench_agent_dir = _get_agent_store_dir(agent_id) / "agent"
     bench_agent_dir.mkdir(parents=True, exist_ok=True)
     bench_models = bench_agent_dir / "models.json"
-    main_models = Path.home() / ".openclaw" / "agents" / "main" / "agent" / "models.json"
+    main_models = _get_openclaw_home() / "agents" / "main" / "agent" / "models.json"
 
     if base_url:
         # Custom OpenAI-compatible endpoint — build a provider entry
@@ -394,8 +396,8 @@ def ensure_agent_exists(
                     "name": mid,
                     "reasoning": False,
                     "input": ["text"],
-                    "contextWindow": 32768,
-                    "maxTokens": 8192,
+                    "contextWindow": OPENCLAW_CONTEXT_WINDOW,
+                    "maxTokens": OPENCLAW_MAX_TOKENS,
                 }
             ],
         }
@@ -590,7 +592,8 @@ def _pinchbench_agent_workspace_for_run(run_id: str) -> Path | None:
     head = str(run_id).split("-", 1)[0].strip()
     if not head.isdigit():
         return None
-    return Path(f"/tmp/pinchbench/{head}/agent_workspace")
+    run_root = Path(os.environ.get("PINCHBENCH_RUN_ROOT", "/tmp/pinchbench"))
+    return run_root / head / "agent_workspace"
 
 
 def prepare_task_workspace(skill_dir: Path, run_id: str, task: Task, agent_id: str) -> Path:
@@ -608,7 +611,8 @@ def prepare_task_workspace(skill_dir: Path, run_id: str, task: Task, agent_id: s
         # Fallback to task-specific workspace if agent workspace not found
         logger.warning("Could not find agent workspace, using fallback")
         rid = str(run_id).split("-", 1)[0] if run_id else ""
-        workspace = Path(f"/tmp/pinchbench/{rid or run_id}/{task.task_id}")
+        run_root = Path(os.environ.get("PINCHBENCH_RUN_ROOT", "/tmp/pinchbench"))
+        workspace = run_root / (rid or run_id) / task.task_id
 
     _BOOTSTRAP_FILES = ["SOUL.md", "BOOTSTRAP.md", "USER.md", "IDENTITY.md", "HEARTBEAT.md", "TOOLS.md"]
 
@@ -668,7 +672,7 @@ def prepare_task_workspace(skill_dir: Path, run_id: str, task: Task, agent_id: s
 
 
 def _get_agent_store_dir(agent_id: str) -> Path:
-    base_dir = Path.home() / ".openclaw" / "agents"
+    base_dir = _get_openclaw_home() / "agents"
     # OpenClaw normalizes agent IDs to lowercase and replaces colons with dashes
     normalized_id = agent_id.replace(":", "-").lower()
     direct_dir = base_dir / agent_id
@@ -678,6 +682,61 @@ def _get_agent_store_dir(agent_id: str) -> Path:
     if normalized_dir.exists():
         return normalized_dir
     return direct_dir
+
+
+def _get_openclaw_home() -> Path:
+    pinch_home = os.environ.get("PINCHBENCH_OPENCLAW_HOME")
+    if pinch_home:
+        return Path(pinch_home).expanduser()
+    openclaw_home = os.environ.get("OPENCLAW_HOME")
+    if openclaw_home:
+        # OpenClaw CLI treats OPENCLAW_HOME as the parent directory and stores
+        # config under "$OPENCLAW_HOME/.openclaw".
+        return Path(openclaw_home).expanduser() / ".openclaw"
+    return Path.home() / ".openclaw"
+
+
+def _remote_openclaw_enabled() -> bool:
+    if os.environ.get("PINCHBENCH_FORCE_LOCAL_OPENCLAW", "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    host = (os.environ.get("OPENCLAW_HOST") or os.environ.get("ECS_HOST") or "").strip()
+    return bool(host and host not in {"localhost", "127.0.0.1"})
+
+
+def _remote_openclaw_ssh_parts() -> tuple[str, str, str, str]:
+    host = (os.environ.get("OPENCLAW_HOST") or os.environ.get("ECS_HOST") or "").strip()
+    user = os.environ.get("OPENCLAW_USER", "root")
+    port = os.environ.get("OPENCLAW_PORT", "22")
+    ssh_key = os.environ.get("OPENCLAW_SSH_KEY", str(Path.home() / ".ssh" / "id_ed25519"))
+    return host, user, port, ssh_key
+
+
+def _remote_openclaw_activate_prefix() -> str:
+    return os.environ.get("OPENCLAW_REMOTE_ACTIVATE_CMD", "").strip()
+
+
+def _sync_remote_openclaw_agent(agent_id: str) -> None:
+    host, user, port, ssh_key = _remote_openclaw_ssh_parts()
+    if not host:
+        return
+    remote_agent_dir = f"$HOME/.openclaw/agents/{agent_id}"
+    local_home = _get_openclaw_home()
+    local_agent_dir = local_home / "agents" / agent_id
+    local_agent_dir.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "scp",
+            "-o", "StrictHostKeyChecking=no",
+            "-i", ssh_key,
+            "-P", str(port),
+            "-r",
+            f"{user}@{host}:{remote_agent_dir}",
+            str(local_agent_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _resolve_session_id_from_store(agent_id: str) -> str | None:
@@ -947,7 +1006,12 @@ def execute_openclaw_task(
     exit_code = -1
     timed_out = False
 
-    # Check if this is a multi-session task
+    remote_enabled = _remote_openclaw_enabled()
+    logger.info(
+        "OpenClaw execution mode: %s (workspace=%s)",
+        "remote" if remote_enabled else "local",
+        workspace,
+    )
     sessions = task.frontmatter.get("sessions", [])
     if sessions:
         # Multi-session task: send each prompt in sequence
@@ -969,25 +1033,52 @@ def execute_openclaw_task(
                 timed_out = True
                 break
             try:
-                result = subprocess.run(
-                    [
-                        "openclaw",
-                        "agent",
-                        "--agent",
-                        agent_id,
-                        "--session-id",
-                        session_id,
-                        "--message",
-                        session_prompt,
-                        "--local",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    cwd=str(workspace),
-                    timeout=remaining,
-                    check=False,
-            shell=USE_SHELL,
-                )
+                if remote_enabled:
+                    host, user, port, ssh_key = _remote_openclaw_ssh_parts()
+                    remote_prefix = _remote_openclaw_activate_prefix()
+                    escaped_prompt = session_prompt.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+                    remote_cmd_parts = [f"cd {workspace}"]
+                    if remote_prefix:
+                        remote_cmd_parts.append(remote_prefix)
+                    remote_cmd_parts.extend([
+                        f"openclaw agent --agent {agent_id} --session-id {session_id} --message \"{escaped_prompt}\" --local",
+                    ])
+                    remote_command = " && ".join(remote_cmd_parts)
+                    result = subprocess.run(
+                        [
+                            "ssh",
+                            "-o", "StrictHostKeyChecking=no",
+                            "-o", "ConnectTimeout=10",
+                            "-i", ssh_key,
+                            "-p", str(port),
+                            f"{user}@{host}",
+                            remote_command,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=remaining,
+                        check=False,
+                    )
+                else:
+                    result = subprocess.run(
+                        [
+                            "openclaw",
+                            "agent",
+                            "--agent",
+                            agent_id,
+                            "--session-id",
+                            session_id,
+                            "--message",
+                            session_prompt,
+                            "--local",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(workspace),
+                        timeout=remaining,
+                        check=False,
+                        shell=USE_SHELL,
+                    )
                 stdout += result.stdout
                 stderr += result.stderr
                 exit_code = result.returncode
@@ -1004,25 +1095,52 @@ def execute_openclaw_task(
     else:
         # Single-session task: send task.prompt once
         try:
-            result = subprocess.run(
-                [
-                    "openclaw",
-                    "agent",
-                    "--agent",
-                    agent_id,
-                    "--session-id",
-                    session_id,
-                    "--message",
-                    task.prompt,
-                    "--local",
-                ],
-                capture_output=True,
-                text=True,
-                cwd=str(workspace),
-                timeout=timeout_seconds,
-                check=False,
-            shell=USE_SHELL,
-            )
+            if remote_enabled:
+                host, user, port, ssh_key = _remote_openclaw_ssh_parts()
+                remote_prefix = _remote_openclaw_activate_prefix()
+                escaped_prompt = task.prompt.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+                remote_cmd_parts = [f"cd {workspace}"]
+                if remote_prefix:
+                    remote_cmd_parts.append(remote_prefix)
+                remote_cmd_parts.extend([
+                    f"openclaw agent --agent {agent_id} --session-id {session_id} --message \"{escaped_prompt}\" --local",
+                ])
+                remote_command = " && ".join(remote_cmd_parts)
+                result = subprocess.run(
+                    [
+                        "ssh",
+                        "-o", "StrictHostKeyChecking=no",
+                        "-o", "ConnectTimeout=10",
+                        "-i", ssh_key,
+                        "-p", str(port),
+                        f"{user}@{host}",
+                        remote_command,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                )
+            else:
+                result = subprocess.run(
+                    [
+                        "openclaw",
+                        "agent",
+                        "--agent",
+                        agent_id,
+                        "--session-id",
+                        session_id,
+                        "--message",
+                        task.prompt,
+                        "--local",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(workspace),
+                    timeout=timeout_seconds,
+                    check=False,
+                    shell=USE_SHELL,
+                )
             stdout = result.stdout
             stderr = result.stderr
             exit_code = result.returncode
@@ -1033,6 +1151,8 @@ def execute_openclaw_task(
         except FileNotFoundError as exc:
             stderr = f"openclaw command not found: {exc}"
 
+    if remote_enabled:
+        _sync_remote_openclaw_agent(agent_id)
     transcript, transcript_path = _load_transcript(agent_id, session_id, start_time)
     usage = _extract_usage_from_transcript(transcript)
     execution_time = time.time() - start_time
@@ -1177,25 +1297,51 @@ def run_openclaw_prompt(
                 if USE_SHELL
                 else chunk
             )
-            result = subprocess.run(
-                [
-                    openclaw_path,
-                    "agent",
-                    "--agent",
-                    agent_id,
-                    "--session-id",
-                    session_id,
-                    "--message",
-                    send_chunk,
-                    "--local",
-                ],
-                capture_output=True,
-                text=True,
-                cwd=str(workspace),
-                timeout=remaining,
-                check=False,
-                shell=USE_SHELL,
-            )
+            if _remote_openclaw_enabled():
+                host, user, port, ssh_key = _remote_openclaw_ssh_parts()
+                remote_prefix = _remote_openclaw_activate_prefix()
+                remote_cmd_parts = [f"cd {workspace}"]
+                if remote_prefix:
+                    remote_cmd_parts.append(remote_prefix)
+                remote_cmd_parts.extend([
+                    f"{openclaw_path} agent --agent {agent_id} --session-id {session_id} --message \"{send_chunk.replace('\"', '\\\"')}\" --local",
+                ])
+                remote_command = " && ".join(remote_cmd_parts)
+                result = subprocess.run(
+                    [
+                        "ssh",
+                        "-o", "StrictHostKeyChecking=no",
+                        "-o", "ConnectTimeout=10",
+                        "-i", ssh_key,
+                        "-p", str(port),
+                        f"{user}@{host}",
+                        remote_command,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=remaining,
+                    check=False,
+                )
+            else:
+                result = subprocess.run(
+                    [
+                        openclaw_path,
+                        "agent",
+                        "--agent",
+                        agent_id,
+                        "--session-id",
+                        session_id,
+                        "--message",
+                        send_chunk,
+                        "--local",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(workspace),
+                    timeout=remaining,
+                    check=False,
+                    shell=USE_SHELL,
+                )
             stdout += result.stdout
             stderr += result.stderr
             exit_code = result.returncode
@@ -1210,6 +1356,8 @@ def run_openclaw_prompt(
             stderr += f"openclaw command not found: {exc}"
             break
 
+    if _remote_openclaw_enabled():
+        _sync_remote_openclaw_agent(agent_id)
     transcript, _ = _load_transcript(agent_id, session_id, start_time)
     execution_time = time.time() - start_time
 

@@ -22,6 +22,7 @@ val has a fresh checkpoint directory to judge.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 
@@ -112,7 +113,24 @@ def apply_patch() -> None:
     _orig = rt.RayPPOTrainer._validate
 
     def _validate(self, merged: bool = False):
-        out = _orig(self, merged=merged)
+        step = int(getattr(self, "global_steps", -1))
+        t0 = time.monotonic()
+        print(f"[pinchbench_validate] start step={step} merged={merged}", flush=True)
+        try:
+            out = _orig(self, merged=merged)
+        except Exception as e:
+            dt = time.monotonic() - t0
+            print(
+                f"[pinchbench_validate] failed step={step} elapsed_s={dt:.1f}: {type(e).__name__}: {e}",
+                flush=True,
+            )
+            raise
+        dt = time.monotonic() - t0
+        keys = list(out.keys()) if isinstance(out, dict) else []
+        print(
+            f"[pinchbench_validate] end step={step} elapsed_s={dt:.1f} keys={keys[:8]}",
+            flush=True,
+        )
         if not merged:
             try:
                 _track_best_and_latest(self, out)

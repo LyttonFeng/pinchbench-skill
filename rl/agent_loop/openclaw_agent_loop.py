@@ -360,10 +360,7 @@ class OpenClawAgentLoop(AgentLoopBase):
                     retry_count = 0
 
                 chat_messages = self._prepare_messages(req.messages, req.tools)
-                max_prompt_tokens = max(
-                    1,
-                    int(getattr(self.rollout_config, "max_prompt_length", 0) or 0),
-                )
+                max_prompt_tokens = int(getattr(self.rollout_config, "max_prompt_length", 0) or 0)
                 if max_prompt_tokens > 0:
                     chat_messages = await _compact_messages_by_turn(
                         chat_messages,
@@ -381,6 +378,12 @@ class OpenClawAgentLoop(AgentLoopBase):
                     break
 
                 if turn_count == 0:
+                    if max_prompt_tokens > 0 and len(prompt_token_ids) > max_prompt_tokens:
+                        logger.warning(
+                            "[run] Turn-0 prompt (%d tokens) exceeds max_prompt_tokens (%d); truncating from left",
+                            len(prompt_token_ids), max_prompt_tokens,
+                        )
+                        prompt_token_ids = list(prompt_token_ids[-max_prompt_tokens:])
                     all_prompt_ids = list(prompt_token_ids)
                 elif not all_prompt_ids:
                     all_prompt_ids = list(prompt_token_ids)

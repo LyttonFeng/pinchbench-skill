@@ -971,7 +971,7 @@ def compute_episode_rewards(
         else:
             r = 0.0
 
-        r = max(-0.5, min(0.3, r))
+        r = max(-0.5, min(0.2, r))
         rewards.append(r)
 
     rewards[-1] += terminal_reward

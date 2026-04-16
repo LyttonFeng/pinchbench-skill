@@ -28,7 +28,7 @@ import aiohttp
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-VLLM_URL = "http://localhost:8000/v1/chat/completions"
+VLLM_URL = os.environ.get("VLLM_URL", "http://127.0.0.1:18022/v1/chat/completions")
 VLLM_MODEL = "Qwen3-4B"
 
 
@@ -43,7 +43,10 @@ def _ecs_host() -> str:
 
 ECS_HOST = _ecs_host()
 SSH_KEY = os.environ.get("OPENCLAW_SSH_KEY", "/root/.ssh/id_ed25519")
-PINCHBENCH_DIR = "/workspace/pinchbench-skill"
+PINCHBENCH_DIR = os.environ.get(
+    "PINCHBENCH_DIR",
+    str(Path(__file__).resolve().parents[1]),
+)
 
 
 async def forward_to_vllm(messages: list, tools: list | None, max_tokens: int = 4096) -> dict:
@@ -70,7 +73,7 @@ async def forward_to_vllm(messages: list, tools: list | None, max_tokens: int = 
 async def run_task(task_id: str, max_turns: int = 15):
     from rl.agent_loop.model_proxy import ModelProxy
 
-    proxy = ModelProxy(host="0.0.0.0", port=0)
+    proxy = ModelProxy(host="127.0.0.1", port=0)
     port = await proxy.start()
     logger.info("ModelProxy on port %d", port)
 

@@ -632,12 +632,12 @@ def main():
     runner.load_tasks()
 
     model_slug = slugify_model(args.model)
-    run_root = Path("/tmp/pinchbench")
+    run_root = Path(os.environ.get("PINCHBENCH_RUN_ROOT", "/tmp/pinchbench"))
     run_id = _next_run_id(run_root)
     skill_dir = skill_root
     agent_id = f"bench-{model_slug}"
     # Use a shared workspace for the agent - we'll copy fixtures per task
-    agent_workspace = Path(f"/tmp/pinchbench/{run_id}/agent_workspace")
+    agent_workspace = run_root / run_id / "agent_workspace"
 
     # Validate model exists before wasting time on tasks
     if args.base_url:

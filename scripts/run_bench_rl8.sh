@@ -31,6 +31,8 @@ fi
 MODEL="${MODEL:-Qwen/Qwen3-4B}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:18010/v1}"
 API_KEY="${API_KEY:-dummy}"
+export PINCHBENCH_OPENCLAW_CONTEXT_WINDOW="${PINCHBENCH_OPENCLAW_CONTEXT_WINDOW:-32768}"
+export PINCHBENCH_OPENCLAW_MAX_TOKENS="${PINCHBENCH_OPENCLAW_MAX_TOKENS:-8192}"
 
 if ! curl -sf "${BASE_URL}/models" >/dev/null 2>&1; then
   echo "ERROR: ${BASE_URL}/models is not reachable."
@@ -42,6 +44,7 @@ fi
 
 echo "RL8_SUITE=${RL8_SUITE}"
 echo "MODEL=${MODEL} BASE_URL=${BASE_URL}"
+echo "OpenClaw lengths: contextWindow=${PINCHBENCH_OPENCLAW_CONTEXT_WINDOW} maxTokens=${PINCHBENCH_OPENCLAW_MAX_TOKENS}"
 
 python3 -u benchmark.py \
   --model "${MODEL}" \
