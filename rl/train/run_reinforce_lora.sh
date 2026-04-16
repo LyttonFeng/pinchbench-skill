@@ -116,7 +116,7 @@ export PINCHBENCH_KEEP_LATEST_CKPT
 # veRL: auto=从 default_local_dir 找最新 ckpt 续训；disable=从头训练（仍建议删掉旧 global_step_* 省盘）
 TRAINER_RESUME_MODE="${TRAINER_RESUME_MODE:-disable}"
 # 若设置正整数：覆盖 len(train_dataloader)*total_epochs，精确跑 N 次 PPO 迭代（与 veRL RayPPOTrainer.total_training_steps 一致）
-TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-8}"
+TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-16}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-10}"
 # 默认每个 epoch 只做一次 validation。当前数据集下 1 个 epoch 约 4 个 step，
 # 因此 test_freq 默认设为 4，避免每 2 个 step 都打断训练。
@@ -142,7 +142,7 @@ EXPERIMENT_NAME="reinforce_lora_${REWARD_MODE}_${RUN_STAMP}"
 export TENSORBOARD_DIR="${TENSORBOARD_DIR:-${OUTPUT_DIR}/tensorboard/${EXPERIMENT_NAME}}"
 
 # OpenClawAgentLoop：每轮经 proxy 的模型调用上限（与 veRL multi_turn.max_assistant_turns 独立）
-export MAX_TURNS="${MAX_TURNS:-10}"
+export MAX_TURNS="${MAX_TURNS:-16}"
 
 # ── 环境变量检查 ──
 echo "=============================="
