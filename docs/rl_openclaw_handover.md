@@ -1,71 +1,71 @@
-# JiuwenClaw-RL Engineering Handover
+# JiuwenClaw-RL 工程交接文档
 
-Last updated: 2026-04-20
+更新时间：2026-04-20
 
-This handover is for engineers who will continue the RL implementation in JiuwenClaw. The current prototype uses:
+这份文档给后续接手 JiuwenClaw-RL 的工程同学看。当前原型链路是：
 
-- `veRL` as the trainer.
-- `Qwen3-1.7B` / Qwen-family models as policy models.
-- `OpenClaw runtime` as the current agent runtime.
-- `PinchBench` tasks and grading as the evaluation environment.
+- `veRL`：训练框架。
+- `Qwen3-1.7B` / Qwen 系列：策略模型。
+- `OpenClaw runtime`：当前 agent runtime。
+- `PinchBench`：任务集、grading、benchmark。
 
-The expected next step is to keep the veRL + PinchBench parts and replace the OpenClaw runtime adapter with a JiuwenClaw runtime adapter.
+下一阶段目标：保留 `veRL + PinchBench`，把当前的 `OpenClaw runtime adapter` 替换成 `JiuwenClaw runtime adapter`。
 
-## One-Line Summary
+## 一句话总结
 
-We implemented an online RL loop for a multi-turn tool agent: veRL samples a PinchBench task, launches an agent runtime, collects tool-use trajectories, grades the final workspace, converts terminal/process rewards into token-level reward tensors, and updates a LoRA policy with REINFORCE++.
+我们实现了一个面向多轮工具 agent 的在线 RL 训练闭环：veRL 采样 PinchBench task，启动 agent runtime，收集工具调用轨迹，用 PinchBench grading 判断最终结果，把 terminal/process reward 对齐到 token-level reward tensor，然后用 REINFORCE++ 更新 LoRA policy。
 
-## Current Architecture
+## 当前整体架构
 
 ```text
 veRL PPO/REINFORCE++ trainer
   -> custom AgentLoop
-    -> start runtime episode
-       currently: OpenClaw on ECS
-       next: JiuwenClaw runtime
-    -> runtime sends OpenAI-compatible chat/tool requests
-    -> AgentLoop calls veRL vLLM rollout server
-    -> model returns text/tool calls
-    -> runtime executes tools and continues
-    -> AgentLoop collects response tokens + tool trajectory
+    -> 启动 runtime episode
+       当前：OpenClaw on ECS
+       后续：JiuwenClaw runtime
+    -> runtime 发起 OpenAI-compatible chat/tool 请求
+    -> AgentLoop 调 veRL vLLM rollout server
+    -> 模型返回 text/tool calls
+    -> runtime 执行工具并继续
+    -> AgentLoop 收集 response tokens + tool trajectory
   -> PinchBench grading
   -> terminal reward + process reward
-  -> custom veRL RewardManager writes token-level rewards
+  -> custom veRL RewardManager 写 token-level rewards
   -> LoRA policy update
 ```
 
-The current implementation is a working adapter around OpenClaw. The important reusable part is the veRL-side contract: an `AgentLoopOutput` with prompt ids, response ids, response mask/logprobs, extra trajectory fields, and token-level rewards.
+当前实现本质上是 OpenClaw 的 runtime adapter。真正可复用的是 veRL 侧契约：`AgentLoopOutput` 需要包含 prompt ids、response ids、response mask/logprobs、轨迹字段、token-level rewards。
 
-## Important Files
+## 重要文件
 
-| File | Purpose |
+| 文件 | 作用 |
 |---|---|
-| `rl/train/run_reinforce_lora.sh` | Main training entrypoint. Sets veRL overrides, LoRA config, reward manager, OpenClaw/Jiuwen runtime env, and preflight checks. |
-| `rl/train/launch_main_ppo.py` | Imports local compatibility patches before launching `verl.trainer.main_ppo`. |
-| `rl/agent_loop/openclaw_agent_loop.py` | Current runtime adapter. This is the main file to replace or fork for JiuwenClaw runtime. |
-| `rl/train/reward_manager.py` | Custom veRL reward manager. Converts per-turn rewards into token-level reward tensor. Keep this. |
-| `rl/agent_loop/reward.py` | Terminal reward + process reward / PRM logic and task rubrics. Keep and refine. |
-| `sitecustomize.py` | Auto-loads veRL/vLLM compatibility patches inside Ray workers. |
-| `scripts/benchmark.py`, `scripts/lib_agent.py`, `scripts/run_bench_rl8.sh` | Local Mac benchmark path against a served model. |
-| `docs/rl_openclaw_handover.md` | This document. |
+| `rl/train/run_reinforce_lora.sh` | 主训练入口。设置 veRL overrides、LoRA 配置、RewardManager、runtime 环境变量和预检。 |
+| `rl/train/launch_main_ppo.py` | 启动 `verl.trainer.main_ppo` 前加载本地兼容 patch。 |
+| `rl/agent_loop/openclaw_agent_loop.py` | 当前 OpenClaw runtime adapter。后续 JiuwenClaw 主要替换/参考这个文件。 |
+| `rl/train/reward_manager.py` | 自定义 veRL RewardManager。把 per-turn/tool reward 转成 token-level reward tensor。这个要保留。 |
+| `rl/agent_loop/reward.py` | terminal reward + process reward / PRM 逻辑和 task rubric。这个要保留并继续迭代。 |
+| `sitecustomize.py` | 在 Ray worker 内自动加载 veRL/vLLM 兼容 patch。 |
+| `scripts/benchmark.py`, `scripts/lib_agent.py`, `scripts/run_bench_rl8.sh` | 本地 Mac 跑 PinchBench RL8 benchmark 的路径。 |
+| `docs/rl_openclaw_handover.md` | 本文档。 |
 
-## What Was Changed Around veRL
+## 我们在 veRL 周边实现了什么
 
-This project does not fork veRL as a large permanent patchset. The implementation is mostly done by:
+这个项目没有大规模 fork veRL。核心做法是：
 
-- Using veRL's existing PPO entrypoint.
-- Registering a custom multi-turn `AgentLoop`.
-- Registering a custom `RewardManager`.
-- Loading small compatibility/debug patches through `sitecustomize.py`.
-- Passing all behavior through Hydra overrides in `rl/train/run_reinforce_lora.sh`.
+- 继续使用 veRL 原生 PPO 入口。
+- 注册一个自定义 multi-turn `AgentLoop`。
+- 注册一个自定义 `RewardManager`。
+- 通过 `sitecustomize.py` 给 Ray worker 加载少量兼容/debug patch。
+- 通过 `rl/train/run_reinforce_lora.sh` 的 Hydra overrides 控制训练行为。
 
-The next engineer should treat these as the reusable veRL changes.
+后续同学应该把下面这些理解成可复用的 veRL 改动。
 
-### 1. Algorithm Configuration: REINFORCE++ Through veRL PPO
+### 1. 用 veRL PPO 入口跑 REINFORCE++
 
-File: `rl/train/run_reinforce_lora.sh`
+文件：`rl/train/run_reinforce_lora.sh`
 
-We keep `verl.trainer.main_ppo` as the trainer, but configure it into a critic-free REINFORCE++ style update:
+我们保留 `verl.trainer.main_ppo` 作为 trainer，但把算法配置成 critic-free 的 REINFORCE++ 风格：
 
 ```bash
 algorithm.adv_estimator=reinforce_plus_plus
@@ -77,21 +77,21 @@ actor_rollout_ref.actor.kl_loss_coef=0.01
 actor_rollout_ref.actor.kl_loss_type=low_var_kl
 ```
 
-Practical meaning:
+实际含义：
 
-- No critic/value model is trained.
-- Each PinchBench episode produces reward from the external environment.
-- KL is still used to keep the LoRA policy close to the base model.
-- This is simpler than GRPO for live-agent tasks because we do not need multiple sampled completions per prompt to form a group baseline. A live runtime episode is slow and stateful, so group sampling multiplies runtime cost.
+- 不训练 critic/value model。
+- 每个 PinchBench episode 从外部环境拿 reward。
+- 仍然加 KL，把 LoRA policy 约束在 base model 附近。
+- 对 live-agent task 来说，这比 GRPO 更直接。GRPO 需要同一个 prompt 多次采样形成 group baseline，但 live runtime episode 慢、带状态、要执行工具，多采样会显著放大成本。
 
-### 2. Multi-Turn Runtime Integration Through AgentLoop
+### 2. 通过 AgentLoop 接入多轮 runtime
 
-Files:
+文件：
 
 - `rl/agent_loop/config.yaml`
 - `rl/agent_loop/openclaw_agent_loop.py`
 
-veRL's normal rollout assumes direct model generation. We use veRL's experimental multi-turn agent-loop path:
+veRL 普通 rollout 是直接模型生成。我们走 veRL experimental multi-turn agent-loop 路径：
 
 ```bash
 actor_rollout_ref.rollout.multi_turn.enable=True
@@ -99,67 +99,67 @@ actor_rollout_ref.rollout.agent.default_agent_loop=openclaw_agent
 actor_rollout_ref.rollout.agent.agent_loop_config_path=rl/agent_loop/config.yaml
 ```
 
-The custom `OpenClawAgentLoop` is the bridge between veRL and the external runtime:
+当前 `OpenClawAgentLoop` 是 veRL 和外部 runtime 的桥：
 
-- veRL samples one row from `train.parquet`.
-- AgentLoop starts one runtime episode.
-- Runtime asks for model completions.
-- AgentLoop calls veRL's vLLM rollout server through `server_manager.generate(...)`.
-- Runtime executes tools.
-- AgentLoop collects generated token ids, masks, logprobs, transcript, grading result, and rewards.
-- AgentLoop returns `AgentLoopOutput`.
+- veRL 从 `train.parquet` 采样一条 task。
+- AgentLoop 启动一个 runtime episode。
+- runtime 请求模型补全。
+- AgentLoop 通过 `server_manager.generate(...)` 调 veRL 的 vLLM rollout server。
+- runtime 执行工具。
+- AgentLoop 收集 generated token ids、mask、logprobs、transcript、grading result、rewards。
+- AgentLoop 返回 `AgentLoopOutput` 给 veRL。
 
-For JiuwenClaw, this file is the main replacement point. The algorithm does not require OpenClaw specifically; it requires a runtime adapter that can produce the same `AgentLoopOutput`.
+对 JiuwenClaw 来说，主要替换点就是这个 AgentLoop。算法不依赖 OpenClaw，算法依赖的是“runtime adapter 能返回同样格式的 `AgentLoopOutput`”。
 
-### 3. Token-Level Reward Manager
+### 3. Token-Level RewardManager
 
-File: `rl/train/reward_manager.py`
+文件：`rl/train/reward_manager.py`
 
-This is the core veRL-side reward change.
+这是最核心的 veRL 侧 reward 改动。
 
-Why it was needed:
+为什么需要：
 
-- veRL's default custom reward flow is mostly scalar reward per sample.
-- A tool agent trajectory has many assistant turns.
-- We need process reward and terminal reward to land on the tokens that caused the actions, not only the final token.
+- veRL 默认 custom reward 更偏向每条样本一个 scalar reward。
+- 工具 agent 轨迹里有很多 assistant turns。
+- process reward / terminal reward 应该落到产生动作的 token 上，而不是只落在最后一个 token。
 
-Implemented behavior:
+已实现行为：
 
-- Define `PinchBenchRewardManager`.
-- Read `extra_fields["tool_rewards"]` from `AgentLoopOutput`.
-- Write token-aligned reward values into veRL's reward tensor.
-- If `tool_rewards` is missing, fall back to `turn_scores`.
-- If turn alignment fails, fall back to final-token scalar reward.
+- 定义 `PinchBenchRewardManager`。
+- 从 `AgentLoopOutput.extra_fields["tool_rewards"]` 读取 token-aligned reward。
+- 写入 veRL 的 reward tensor。
+- 如果没有 `tool_rewards`，fallback 到 `turn_scores`。
+- 如果 turn 对齐失败，再 fallback 到最后一个有效 token 的 scalar reward。
 
-Expected adapter contract:
+runtime adapter 需要尽量提供：
 
 ```python
 extra_fields={
-    "tool_rewards": [...],  # same length as response_ids
-    "turn_scores": [...],   # per assistant turn
+    "tool_rewards": [...],  # 长度与 response_ids 一致
+    "turn_scores": [...],   # 每个 assistant turn 一个分数
     "task_id": "...",
     "trajectory": [...],
 }
 ```
 
-If JiuwenClaw can provide `tool_rewards`, training keeps the intended token-level credit assignment. If it only provides a scalar score, the training path still runs but degrades to weaker final-token credit assignment.
+如果 JiuwenClaw 能提供 `tool_rewards`，训练就是预期的 token-level credit assignment。如果只提供 scalar score，训练仍能跑，但会退化成较弱的 final-token credit assignment。
 
-### 4. Process Reward / PRM Logic
+### 4. Process Reward / PRM
 
-Files:
+文件：
 
 - `rl/agent_loop/reward.py`
 - `rl/agent_loop/openclaw_agent_loop.py`
 
-The runtime adapter computes terminal success from PinchBench grading, then calls process-reward logic per assistant turn.
+runtime adapter 先用 PinchBench grading 得到 terminal success，再按 assistant turn 计算 process reward。
 
-Current reward components:
+当前 reward 组成：
 
-- `terminal_reward`: final PinchBench success/failure signal.
-- `process_reward`: per-turn quality score from rule/self-judge/oracle-judge.
-- `total_reward`: sum of turn rewards after terminal reward is attached.
+- `terminal_reward`：最终任务成功/失败信号。
+- `process_reward`：每轮 assistant action 的质量分。
+- `total_reward`：turn rewards 求和，最后一个 turn 上叠加 terminal reward。
 
-Current modes:
+当前模式：
 
 ```bash
 REWARD_MODE=baseline
@@ -168,39 +168,39 @@ REWARD_MODE=self-judge
 REWARD_MODE=oracle-judge
 ```
 
-The default experimental path has been `self-judge`. For cleaner offline data production or stronger labels, use `oracle-judge` with `qwen-plus`.
+当前实验默认用 `self-judge`。如果要构造更干净的离线数据或更强标签，可以用 `oracle-judge`，通常接 `qwen-plus`。
 
 ### 5. Per-Task EMA Baseline
 
-Files:
+文件：
 
 - `rl/train/reward_manager.py`
 - `rl/agent_loop/openclaw_agent_loop.py`
 
-RL8 tasks have very different difficulty. A single global reward baseline makes hard tasks look permanently bad and easy tasks look permanently good.
+RL8 不同 task 难度差别很大。全局 baseline 会让困难 task 长期显得差，让简单 task 长期显得好。
 
-Implemented behavior:
+已实现：
 
-- Track an EMA baseline per `task_id`.
-- Normalize rewards around that task's recent mean.
-- Defaults:
+- 按 `task_id` 维护 EMA baseline。
+- reward 围绕该 task 最近均值做中心化。
+- 默认环境变量：
 
 ```bash
 PINCHBENCH_TASK_EMA_ALPHA=0.1
 PINCHBENCH_TASK_EMA_INIT=0.1
 ```
 
-This is not a critic. It is a lightweight per-task baseline for stabilizing sparse agent rewards.
+注意：这不是 critic，只是一个轻量 per-task baseline，用来稳定稀疏 agent reward。
 
-### 6. LoRA Training And Checkpoint Handling
+### 6. LoRA 训练和 checkpoint
 
-Files:
+文件：
 
 - `rl/train/run_reinforce_lora.sh`
 - `rl/verl_lora_only_ckpt_patch.py`
 - `rl/verl_best_ckpt_patch.py`
 
-The current training path is LoRA-only:
+当前训练是 LoRA-only：
 
 ```bash
 actor_rollout_ref.model.lora_rank=32
@@ -208,17 +208,17 @@ actor_rollout_ref.model.lora_alpha=64
 actor_rollout_ref.model.target_modules=...
 ```
 
-Checkpoint behavior added around veRL:
+围绕 veRL 增加的 checkpoint 行为：
 
-- Save LoRA adapter checkpoints for serving/evaluation.
-- Optionally keep best checkpoint by validation reward.
-- Optionally keep latest checkpoint for debugging.
+- 保存可用于 serving/eval 的 LoRA adapter checkpoint。
+- 可选按 validation reward 保留 best checkpoint。
+- 可选保留 latest checkpoint，方便 debug。
 
-This matters because the served model for PinchBench benchmark should load the LoRA adapter, not a full FSDP training checkpoint.
+这个很重要：PinchBench benchmark 评测时应该加载 LoRA adapter，而不是 FSDP 训练态的 full checkpoint。
 
-### 7. veRL/vLLM Compatibility Patches
+### 7. veRL/vLLM 兼容 patch
 
-Files loaded by `sitecustomize.py`:
+通过 `sitecustomize.py` 自动加载：
 
 - `rl/verl_debug_metrics_patch.py`
 - `rl/verl_best_ckpt_patch.py`
@@ -227,56 +227,56 @@ Files loaded by `sitecustomize.py`:
 - `rl/verl_qwen3_5_generation_patch.py`
 - `rl/verl_vllm_lora_empty_guard_patch.py`
 
-Why `sitecustomize.py` is used:
+为什么用 `sitecustomize.py`：
 
-- Ray workers import Python modules in separate processes.
-- Setting `PYTHONPATH` to repo root makes Python auto-load `sitecustomize.py`.
-- This ensures patches are applied inside `TaskRunner`, `WorkerDict`, and vLLM server workers.
+- Ray worker 是独立 Python 进程。
+- `PYTHONPATH` 指向 repo root 后，Python 会自动加载 `sitecustomize.py`。
+- 这样 patch 能进入 `TaskRunner`、`WorkerDict`、vLLM server worker。
 
-Patch intent:
+各 patch 的意图：
 
-- `verl_debug_metrics_patch.py`: add debug visibility when rollout/reward metrics are missing or malformed.
-- `verl_best_ckpt_patch.py`: keep best checkpoint by validation reward.
-- `verl_lora_only_ckpt_patch.py`: save lightweight LoRA adapter artifacts.
-- `transformers_qwen3_5_patch.py`: compatibility alias for Qwen3.5 config classes.
-- `verl_qwen3_5_generation_patch.py`: handle Qwen3.5 models without `generation_config.json`.
-- `verl_vllm_lora_empty_guard_patch.py`: fail loudly if vLLM receives an empty LoRA during weight sync.
+- `verl_debug_metrics_patch.py`：补 debug 可见性，避免 rollout/reward 指标为空时直接难查。
+- `verl_best_ckpt_patch.py`：按 validation reward 保留 best checkpoint。
+- `verl_lora_only_ckpt_patch.py`：保存轻量 LoRA adapter artifact。
+- `transformers_qwen3_5_patch.py`：Qwen3.5 config/model 兼容 shim。
+- `verl_qwen3_5_generation_patch.py`：处理 Qwen3.5 缺 `generation_config.json` 的情况。
+- `verl_vllm_lora_empty_guard_patch.py`：如果 vLLM 收到空 LoRA，直接报清楚，不允许静默训练。
 
-Important distinction:
+关键区分：
 
-- The algorithmic changes are AgentLoop, RewardManager, PRM, and REINFORCE++ config.
-- The Qwen3.5 patches are compatibility workarounds.
-- The empty-LoRA guard is a debug/safety patch, not a fix. If it fires, training is invalid because no LoRA tensors reached vLLM.
+- 算法主体：AgentLoop、RewardManager、PRM、REINFORCE++ config。
+- Qwen3.5 patch：兼容性 workaround。
+- empty-LoRA guard：debug/safety patch，不是修复。如果触发，说明 LoRA tensor 没有同步到 vLLM，训练无效。
 
-### 8. Current Known veRL Issues
+### 8. 当前已知 veRL 问题
 
-Qwen3-1.7B:
+Qwen3-1.7B：
 
-- Works better than Qwen3.5-2B as the current training target.
-- `ROLLOUT_LAYERED_SUMMON=False` is required in the current stack.
-- Healthy LoRA sync should show:
+- 当前比 Qwen3.5-2B 更适合作为训练主线。
+- 当前栈里需要 `ROLLOUT_LAYERED_SUMMON=False`。
+- 健康 LoRA sync 应该看到：
 
 ```text
 collect_lora_params done count=392
 ```
 
-Qwen3.5-2B:
+Qwen3.5-2B：
 
-- Hit multiple veRL/vLLM/Transformers compatibility issues.
-- `generation_config.json` missing path needed a patch.
-- vLLM Qwen3.5 config handling incorrectly touched VL paths in some versions.
-- Not recommended as the immediate engineering baseline.
+- 遇到多处 veRL/vLLM/Transformers 兼容问题。
+- 缺 `generation_config.json`，需要 patch。
+- Qwen3.5 top-level config 包了 `text_config`，部分 vLLM 版本会误走 VL 路径。
+- 不建议作为当前工程主线。
 
-Long think-mode trajectories:
+think-mode 长轨迹：
 
-- Prompt FIFO prevents context overflow.
-- Backward can still OOM if the generated response sequence is too long.
-- Latest Qwen3-1.7B think run reached `global_step=6` with `MAX_TURNS=10`, then OOMed during backward.
-- Recommended next setting is `MAX_TURNS=8`, and possibly lower `MAX_RESPONSE_LENGTH`.
+- Prompt FIFO 能防 prompt 超上下文。
+- 但 response 太长时，backward 仍会 OOM。
+- 最近 Qwen3-1.7B think 训练在 `MAX_TURNS=10` 下跑到 `global_step=6`，之后 backward OOM。
+- 建议下一轮用 `MAX_TURNS=8`，必要时降低 `MAX_RESPONSE_LENGTH`。
 
-## veRL Training Setup
+## veRL 训练配置
 
-The training script uses veRL 0.7.1 style PPO entrypoint, but configures the algorithm as REINFORCE++:
+训练脚本使用 veRL 0.7.1 风格 PPO 入口，但算法配置为 REINFORCE++：
 
 ```bash
 algorithm.adv_estimator=reinforce_plus_plus
@@ -288,7 +288,7 @@ actor_rollout_ref.actor.kl_loss_coef=0.01
 actor_rollout_ref.actor.kl_loss_type=low_var_kl
 ```
 
-LoRA config:
+LoRA 配置：
 
 ```bash
 actor_rollout_ref.model.lora_rank=32
@@ -296,7 +296,7 @@ actor_rollout_ref.model.lora_alpha=64
 actor_rollout_ref.model.target_modules=[q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj,in_proj_qkv,in_proj_qkvz,in_proj_ba,in_proj_a,in_proj_b,in_proj_z,out_proj]
 ```
 
-Rollout config:
+Rollout 配置：
 
 ```bash
 actor_rollout_ref.rollout.name=vllm
@@ -305,16 +305,16 @@ actor_rollout_ref.rollout.agent.default_agent_loop=openclaw_agent
 actor_rollout_ref.rollout.agent.agent_loop_config_path=rl/agent_loop/config.yaml
 ```
 
-For JiuwenClaw, the plan is:
+JiuwenClaw 迁移计划：
 
-- Keep veRL trainer and overrides.
-- Add a new agent loop, for example `jiuwenclaw_agent_loop.py`.
-- Change `default_agent_loop` from `openclaw_agent` to the new JiuwenClaw loop.
-- Keep the reward manager and PinchBench grading contract.
+- 保留 veRL trainer 和 overrides。
+- 新增一个 agent loop，例如 `jiuwenclaw_agent_loop.py`。
+- 把 `default_agent_loop` 从 `openclaw_agent` 改成 JiuwenClaw loop。
+- 保留 `PinchBenchRewardManager` 和 PinchBench grading contract。
 
-## AgentLoop Contract
+## AgentLoop 契约
 
-The custom agent loop must return a veRL `AgentLoopOutput`:
+自定义 agent loop 必须返回 veRL `AgentLoopOutput`：
 
 ```python
 AgentLoopOutput(
@@ -339,101 +339,101 @@ AgentLoopOutput(
 )
 ```
 
-Critical fields:
+关键字段：
 
-- `response_ids`: flattened generated model tokens.
-- `response_mask`: `1` for model-generated tokens, `0` for environment/tool tokens.
-- `response_logprobs`: model token logprobs; env/tool tokens can be `0`.
-- `tool_rewards`: token-aligned reward vector, same response length.
-- `turn_scores`: fallback per-turn rewards.
-- `trajectory`: assistant/tool transcript for PRM and debugging.
+- `response_ids`：flatten 后的模型生成 token。
+- `response_mask`：模型生成 token 为 `1`，环境/tool token 为 `0`。
+- `response_logprobs`：模型 token logprobs；环境/tool token 可为 `0`。
+- `tool_rewards`：token-aligned reward vector，长度与 response 一致。
+- `turn_scores`：fallback 的 per-turn rewards。
+- `trajectory`：assistant/tool transcript，用于 PRM 和 debug。
 
-The JiuwenClaw runtime adapter must preserve this contract even if the runtime interface differs from OpenClaw.
+即使 JiuwenClaw runtime 接口和 OpenClaw 不同，也必须保持这个 veRL 侧契约。
 
-## Runtime Adapter Responsibilities
+## Runtime Adapter 职责
 
-The current OpenClaw adapter in `rl/agent_loop/openclaw_agent_loop.py` does five jobs:
+当前 `rl/agent_loop/openclaw_agent_loop.py` 做五件事：
 
-1. Start one runtime episode for a PinchBench task.
-2. Route runtime model requests to veRL vLLM rollout server.
-3. Parse model outputs into runtime-compatible text/tool calls.
-4. Collect transcript, response tokens, tool results, and workspace state.
-5. Run PinchBench grading and attach reward metadata.
+1. 为一个 PinchBench task 启动 runtime episode。
+2. 把 runtime 的模型请求路由到 veRL vLLM rollout server。
+3. 把模型输出解析成 runtime 能理解的 text/tool calls。
+4. 收集 transcript、response tokens、tool results、workspace state。
+5. 跑 PinchBench grading，并附加 reward metadata。
 
-For JiuwenClaw, replace these OpenClaw-specific parts:
+JiuwenClaw 需要替换的 OpenClaw-specific 部分：
 
-- Starting OpenClaw through SSH.
-- OpenClaw agent config generation.
-- OpenClaw model provider registration.
-- OpenClaw transcript parsing.
-- OpenClaw workspace sync.
-- OpenClaw skill preflight.
+- 通过 SSH 启动 OpenClaw。
+- OpenClaw agent config 生成。
+- OpenClaw model provider 注册。
+- OpenClaw transcript 解析。
+- OpenClaw workspace sync。
+- OpenClaw skill preflight。
 
-Keep these generic parts:
+需要保留的通用部分：
 
-- Chat template application.
-- vLLM `server_manager.generate(...)` call.
-- Prompt FIFO / context compaction.
-- Response token/mask/logprob collection.
-- Reward computation interface.
-- `AgentLoopOutput` format.
+- Chat template application。
+- vLLM `server_manager.generate(...)` 调用。
+- Prompt FIFO / context compaction。
+- Response token/mask/logprob 收集。
+- Reward computation interface。
+- `AgentLoopOutput` 格式。
 
-## Prompt / Context Handling
+## Prompt / Context 处理
 
-Multi-turn agent prompts can exceed context length. The current adapter has FIFO compaction:
+多轮 agent prompt 很容易超过上下文。当前 adapter 已经有 FIFO compaction：
 
-- `PINCHBENCH_AGENT_MAX_PROMPT_TOKENS` defaults to `MAX_PROMPT_LENGTH`.
-- `_compact_messages_by_turn()` drops oldest complete assistant turns until prompt fits.
-- This fixed prompt crashes such as:
+- `PINCHBENCH_AGENT_MAX_PROMPT_TOKENS` 默认等于 `MAX_PROMPT_LENGTH`。
+- `_compact_messages_by_turn()` 会按完整 assistant turn 删除最旧历史，直到 prompt fits。
+- 这个修过如下错误：
 
 ```text
 Prompt length exceeds the model's maximum context length
 ```
 
-Important distinction:
+重要区别：
 
-- Prompt FIFO prevents prompt overflow.
-- It does not solve backward OOM caused by too many generated response tokens.
+- Prompt FIFO 解决 prompt overflow。
+- 它不能解决生成 response 太长导致的 backward OOM。
 
-For JiuwenClaw, keep the same strategy:
+JiuwenClaw 版本也应保留同样策略：
 
-- Bound prompt tokens before calling `server_manager.generate`.
-- Bound max turns.
-- Track response budget and compact/stop if response tokens exceed budget.
+- 调 `server_manager.generate` 前限制 prompt tokens。
+- 限制 max turns。
+- 跟踪 response budget；如果 response tokens 超预算，要 compact 或 stop。
 
-## Reward System
+## Reward 系统
 
-Reward has two layers:
+Reward 分两层：
 
-1. Terminal reward from PinchBench grading.
-2. Process reward per assistant turn.
+1. PinchBench grading 给 terminal reward。
+2. 每个 assistant turn 给 process reward。
 
 ### Terminal Reward
 
-PinchBench grading checks final output/workspace. The current code converts grading to:
+PinchBench grading 检查最终输出/workspace。当前转换逻辑：
 
-- success: `+1.0 * PINCHBENCH_TERMINAL_REWARD_WEIGHT`
-- failure: `0.0`
-- selected "claimed done but wrote no file" cases: `-1.0`
+- success：`+1.0 * PINCHBENCH_TERMINAL_REWARD_WEIGHT`
+- failure：`0.0`
+- 部分“声称完成但没有写文件”的场景：`-1.0`
 
-File-creation failure penalties are handled in `rl/agent_loop/reward.py`.
+文件创建失败等惩罚逻辑在 `rl/agent_loop/reward.py`。
 
 ### Process Reward
 
-Process reward is produced per assistant turn:
+process reward 按 assistant turn 产生：
 
-- `baseline`: no process reward.
-- `rule`: rule-based reward.
-- `self-judge`: same local model judges its own turn.
-- `oracle-judge`: stronger external judge, usually `qwen-plus`.
+- `baseline`：不加 process reward。
+- `rule`：规则打分。
+- `self-judge`：当前本地模型自评。
+- `oracle-judge`：更强外部 judge，通常是 `qwen-plus`。
 
-Current default:
+当前默认：
 
 ```bash
 REWARD_MODE=self-judge
 ```
 
-The PRM prompt includes:
+PRM prompt 包含：
 
 - task goal
 - optional hints
@@ -442,88 +442,88 @@ The PRM prompt includes:
 - current tool call
 - current tool result preview
 
-Score range:
+分数范围：
 
 ```text
--0.5 to +0.2 per turn
+-0.5 到 +0.2 / turn
 ```
 
-Terminal reward is added to the last turn.
+terminal reward 会加到最后一个 turn。
 
-## Token-Level Reward Alignment
+## Token-Level Reward 对齐
 
-The most important veRL change is `PinchBenchRewardManager` in `rl/train/reward_manager.py`.
+最重要的 veRL 改动是 `rl/train/reward_manager.py` 里的 `PinchBenchRewardManager`。
 
-Why it exists:
+存在原因：
 
-- veRL's standard custom reward path puts one scalar on the final token.
-- Multi-turn agent RL needs credit assignment across turns.
+- veRL 标准 custom reward 路径更像是把 scalar reward 放到最后一个 token。
+- 多轮 agent RL 需要跨 turn 做 credit assignment。
 
-What it does:
+它做的事：
 
-- Creates a zero reward tensor shaped like `responses`.
-- Preferentially reads `extra_fields["tool_rewards"]`.
-- Writes those values directly into the reward tensor.
-- Falls back to assigning `turn_scores` at `<|im_end|>` token positions.
-- Falls back again to scalar reward on final valid token.
+- 创建一个和 `responses` 同 shape 的零 reward tensor。
+- 优先读取 `extra_fields["tool_rewards"]`。
+- 直接把 token-aligned reward 写进 tensor。
+- fallback：把 `turn_scores` 放到 `<|im_end|>` token 位置。
+- 再 fallback：把 scalar reward 放到最后一个有效 token。
 
-This means the runtime adapter should provide `tool_rewards` whenever possible.
+因此 runtime adapter 应尽量提供 `tool_rewards`。
 
 ## Per-Task EMA Baseline
 
-Implemented in `rl/train/reward_manager.py`.
+实现在 `rl/train/reward_manager.py`。
 
-Problem:
+问题：
 
-- RL8 tasks have different base difficulty.
-- A global reward baseline makes hard tasks poison easier tasks.
+- RL8 task 难度不同。
+- 全局 reward baseline 会让 hard task 干扰 easy task。
 
-Solution:
+方案：
 
-- Maintain EMA baseline per `task_id`.
-- Normalize reward as:
+- 每个 `task_id` 维护 EMA baseline。
+- reward 归一化为：
 
 ```text
 advantage-like score = raw_reward - EMA(task_id)
 ```
 
-Key env vars:
+关键环境变量：
 
 ```bash
 PINCHBENCH_TASK_EMA_ALPHA=0.1
 PINCHBENCH_TASK_EMA_INIT=0.1
 ```
 
-This is important for multi-task agent training and should remain in the JiuwenClaw version.
+这对多任务 agent 训练很重要，迁移到 JiuwenClaw 时应保留。
 
-## PinchBench Integration
+## PinchBench 集成
 
-PinchBench is used in two places:
+PinchBench 用在两处：
 
-1. Training prompt data:
+1. 训练 prompt 数据：
    - `rl/data/prompts/train.parquet`
    - `rl/data/prompts/val.parquet`
 
-2. Grading:
-   - final workspace/transcript is evaluated by PinchBench grading logic.
-   - benchmark results are run from Mac with `scripts/run_bench_rl8.sh`.
+2. Grading：
+   - episode 结束后，用 PinchBench grading 评估最终 workspace/transcript。
+   - benchmark 从本地 Mac 通过 `scripts/run_bench_rl8.sh` 跑。
 
-The training script runs a train-vs-benchmark prompt parity check:
+训练脚本会先做 train-vs-benchmark prompt parity check：
 
 ```bash
 python3 rl/scripts/check_train_infer_parity.py
 ```
 
-Keep this check. It prevents training on prompts that differ from benchmark prompts.
+这个检查要保留。它防止训练 prompt 和 benchmark prompt 不一致。
 
-## Benchmark Flow
+## Benchmark 流程
 
-Benchmark is not run inside RunPod. Run it from the local Mac.
+Benchmark 不在 RunPod 里跑，在本地 Mac 跑。RunPod 只负责模型推理。
 
-Typical flow:
+典型流程：
 
 ```bash
-# 1. Serve model or LoRA on RunPod
+# 1. 在 RunPod serve model 或 LoRA
 python -m vllm.entrypoints.openai.api_server \
   --model Qwen/Qwen3-1.7B \
   --port 8021 \
@@ -531,92 +531,92 @@ python -m vllm.entrypoints.openai.api_server \
   --enable-auto-tool-choice \
   --tool-call-parser hermes
 
-# 2. Tunnel from Mac to RunPod
+# 2. Mac 到 RunPod 建 tunnel
 ssh -N \
   -L 127.0.0.1:18021:127.0.0.1:8021 \
   root@<pod-ip> -p <pod-port> -i ~/.ssh/id_ed25519
 
-# 3. Run RL8 benchmark on Mac
+# 3. Mac 跑 RL8 benchmark
 source ~/.pinchbench_env
 MODEL=Qwen3-1.7B BASE_URL=http://127.0.0.1:18021/v1 bash scripts/run_bench_rl8.sh
 ```
 
-Tool parser matters:
+tool parser 很关键：
 
-- Qwen3 / Qwen3-1.7B: usually `hermes`.
-- Qwen3.5: must use `qwen3_xml`.
-- Qwen3.5-2B: avoid `--reasoning-parser deepseek_r1` with `qwen3_xml`; it can hide tool calls inside reasoning.
-- Always use `--enable-auto-tool-choice`.
+- Qwen3 / Qwen3-1.7B：通常用 `hermes`。
+- Qwen3.5：必须用 `qwen3_xml`。
+- Qwen3.5-2B：不要把 `--reasoning-parser deepseek_r1` 和 `qwen3_xml` 混用；它可能把 tool call 吞进 reasoning，导致 `tool_calls=[]`。
+- 一定要开 `--enable-auto-tool-choice`。
 
-## Model / Experiment Status
+## 模型 / 实验状态
 
 ### Qwen3-1.7B Benchmark
 
-Observed RL8 benchmark:
+已观察到的 RL8 benchmark：
 
-| Model setting | RL8 score |
+| 模型设置 | RL8 分数 |
 |---|---:|
 | Qwen3-1.7B non-think | 34.5% |
 | Qwen3-1.7B think | 53.0% |
 
-Details:
+详情见：
 
 - `docs/qwen3_1_7b_rl8_think_vs_nonthink_20260419.md`
 
-### Qwen3-1.7B Training
+### Qwen3-1.7B 训练
 
-The model can initialize, roll out, sync LoRA, and train for several steps.
+模型可以初始化、rollout、同步 LoRA，并训练若干 step。
 
-Required setting:
+必要设置：
 
 ```bash
 ROLLOUT_LAYERED_SUMMON=False
 ```
 
-Why:
+原因：
 
-- With `layered_summon=True`, veRL collected zero LoRA tensors for Qwen3-1.7B under current FSDP/PEFT naming.
-- Correct sync shows:
+- `layered_summon=True` 时，当前 FSDP/PEFT 命名下 veRL 对 Qwen3-1.7B 收集到 0 个 LoRA tensor。
+- 正确同步应看到：
 
 ```text
 collect_lora_params done count=392
 ```
 
-Current issue:
+当前问题：
 
-- Think-mode training OOMs during `loss.backward()` for long trajectories.
-- `MAX_TURNS=16` OOMed.
-- `BATCH_SIZE=1 + MAX_TURNS=10` reached `global_step=6` then OOMed.
-- Latest failing log:
+- think-mode 训练在长轨迹下会在 `loss.backward()` OOM。
+- `MAX_TURNS=16` OOM。
+- `BATCH_SIZE=1 + MAX_TURNS=10` 跑到 `global_step=6` 后 OOM。
+- 最近失败日志：
 
 ```text
 /tmp/train_qwen31_think_16_bt1_turn10.log
 ```
 
-OOM signature:
+OOM signature：
 
 ```text
 torch.OutOfMemoryError: CUDA out of memory. Tried to allocate ~8.04 GiB
 ```
 
-Reason:
+原因：
 
-- Think mode generates long hidden reasoning.
-- Long tool trajectories produce 20k+ training sequences.
-- Backward peak memory exceeds 44GB GPU.
+- think mode 会生成长 reasoning。
+- 长工具轨迹会产生 20k+ training sequence。
+- backward peak memory 超过 44GB GPU。
 
-Recommended next training attempt:
+建议下一轮训练：
 
 ```bash
 BATCH_SIZE=1
 MICRO_BATCH=1
 MAX_TURNS=8
-MAX_RESPONSE_LENGTH=<lower than 12000 if needed>
+MAX_RESPONSE_LENGTH=<必要时低于 12000>
 ROLLOUT_LAYERED_SUMMON=False
 OPENCLAW_MODEL_REASONING=1
 ```
 
-Or run no-think first for a stable LoRA training baseline:
+或者先跑 no-think 稳定 LoRA baseline：
 
 ```bash
 OPENCLAW_MODEL_REASONING=0
@@ -624,61 +624,61 @@ OPENCLAW_MODEL_REASONING=0
 
 ### Qwen3.5-2B
 
-Do not continue this as the main path right now.
+当前不建议继续作为主线。
 
-Problems encountered:
+遇到的问题：
 
-- Transformers/veRL/vLLM compatibility issues with `qwen3_5`.
-- Missing `generation_config.json`.
-- Qwen3.5 top-level config wraps `text_config`.
-- vLLM LoRA sync instability.
-- Host RAM pressure during initialization.
+- Transformers/veRL/vLLM 对 `qwen3_5` 的兼容问题。
+- 缺 `generation_config.json`。
+- Qwen3.5 top-level config 包了 `text_config`。
+- vLLM LoRA sync 不稳定。
+- 初始化时 host RAM 压力大。
 
-Compatibility patches exist:
+已有兼容 patch：
 
 - `rl/transformers_qwen3_5_patch.py`
 - `rl/verl_qwen3_5_generation_patch.py`
-- loaded by `sitecustomize.py`
+- 由 `sitecustomize.py` 加载
 
-These are debugging aids, not a fully stable production path.
+这些是 debug 辅助，不是完全稳定的生产路径。
 
 ## veRL / vLLM Patches
 
-Loaded automatically through `sitecustomize.py` because Ray workers inherit `PYTHONPATH`.
+这些 patch 通过 `sitecustomize.py` 自动加载，因为 Ray workers 会继承 `PYTHONPATH`。
 
-Patches:
+Patch 列表：
 
 - `rl/verl_debug_metrics_patch.py`
-  - Avoids crash on empty rollout probability diff metrics.
+  - 避免空 rollout probability diff metrics 导致难查问题。
 - `rl/verl_best_ckpt_patch.py`
-  - Keeps best checkpoint by validation metric and optionally latest.
+  - 按 validation metric 保留 best checkpoint，并可选保留 latest。
 - `rl/verl_lora_only_ckpt_patch.py`
-  - Saves smaller LoRA adapter checkpoints.
+  - 保存更小的 LoRA adapter checkpoint。
 - `rl/transformers_qwen3_5_patch.py`
-  - Qwen3.5 config/model compatibility shim.
+  - Qwen3.5 config/model compatibility shim。
 - `rl/verl_qwen3_5_generation_patch.py`
-  - Generation config fallback for Qwen3.5.
+  - Qwen3.5 generation config fallback。
 - `rl/verl_vllm_lora_empty_guard_patch.py`
-  - Adds diagnostics and hard-fails clearly if LoRA collection is empty.
+  - 增加诊断；如果 LoRA collection 为空，明确 hard fail。
 
-Important: `verl_vllm_lora_empty_guard_patch.py` currently fails loudly if LoRA is empty. This is intentional. Silently continuing with empty LoRA would make training meaningless.
+重要：`verl_vllm_lora_empty_guard_patch.py` 现在会在 LoRA 为空时直接失败，这是有意的。静默继续会让训练变成无效训练。
 
-## Known veRL Site-Package Patch
+## 已知 veRL site-package 直接 patch
 
-The `masked_whiten` epsilon patch is still a direct edit in installed veRL:
+`masked_whiten` epsilon patch 目前还是直接改了安装环境里的 veRL：
 
 ```python
 # /usr/local/lib/python3.12/dist-packages/verl/utils/torch_functional.py
 whitened = (values - mean) * torch.rsqrt(var + 1.0)
 ```
 
-Without this, sparse token reward can produce huge advantage values.
+如果没有这个改动，稀疏 token reward 容易产生很大的 advantage。
 
-This should eventually become a clean repo patch or upstream config option.
+后续应把它沉淀成 repo patch 或 upstream config option。
 
-## Current Training Command Template
+## 当前训练命令模板
 
-For Qwen3-1.7B think, safer version:
+Qwen3-1.7B think 的相对安全版本：
 
 ```bash
 cd /workspace/pinchbench-skill
@@ -702,20 +702,20 @@ VLLM_MAX_MODEL_LEN=40960 \
 bash rl/train/run_reinforce_lora.sh 2>&1 | tee /tmp/train_qwen31_think_bt1_turn8.log
 ```
 
-## What JiuwenClaw Needs To Implement
+## JiuwenClaw 需要实现什么
 
-The JiuwenClaw runtime adapter should implement the same logical interface as the OpenClaw adapter:
+JiuwenClaw runtime adapter 要实现和当前 OpenClaw adapter 一样的逻辑接口：
 
-1. Start a runtime episode for a task.
-2. Feed the task prompt to JiuwenClaw.
-3. Receive model requests from JiuwenClaw.
-4. Convert those requests to veRL/vLLM prompt ids.
-5. Send model outputs back to JiuwenClaw as text/tool calls.
-6. Collect tool trajectory and workspace state.
-7. Run PinchBench grading.
-8. Return `AgentLoopOutput` with token ids, masks, rewards, and extra fields.
+1. 为一个 task 启动 runtime episode。
+2. 把 task prompt 喂给 JiuwenClaw。
+3. 接收 JiuwenClaw 的模型请求。
+4. 把这些请求转换成 veRL/vLLM prompt ids。
+5. 把模型输出作为 text/tool calls 返回给 JiuwenClaw。
+6. 收集 tool trajectory 和 workspace state。
+7. 执行 PinchBench grading。
+8. 返回包含 token ids、masks、rewards、extra fields 的 `AgentLoopOutput`。
 
-Do not rewrite veRL training first. The fastest path is to replace only the runtime adapter while keeping:
+不要一开始重写 veRL 训练。最快路径是只替换 runtime adapter，同时保留：
 
 - `run_reinforce_lora.sh`
 - `PinchBenchRewardManager`
@@ -724,9 +724,9 @@ Do not rewrite veRL training first. The fastest path is to replace only the runt
 - benchmark scripts
 - LoRA checkpoint patches
 
-## Things To Watch During Training
+## 训练时重点看什么
 
-Healthy logs:
+健康日志：
 
 ```text
 collect_lora_params done count=392
@@ -737,7 +737,7 @@ critic/advantages/max:<finite>
 Chat template done, prompt_ids=<below budget>
 ```
 
-Bad logs:
+异常日志：
 
 ```text
 collect_lora_params done count=0
@@ -748,11 +748,11 @@ assistant content: []
 tool_calls=[]
 ```
 
-## Recommended Next Steps
+## 推荐下一步
 
-1. Build `JiuwenClawAgentLoop` by copying the OpenClaw adapter and replacing runtime-specific parts.
-2. Keep `PinchBenchRewardManager` unchanged initially.
-3. Run a smoke test with one easy task and `BATCH_SIZE=1`, `MAX_TURNS=3`.
-4. Verify `AgentLoopOutput.extra_fields` contains `tool_rewards`, `turn_scores`, `trajectory`, `terminal_success`, and `task_id`.
-5. Run RL8 benchmark before and after a short LoRA run.
-6. Only after the loop is stable, improve PRM quality or data construction.
+1. 复制 `OpenClawAgentLoop`，实现 `JiuwenClawAgentLoop`，只替换 runtime-specific 部分。
+2. 初始阶段保持 `PinchBenchRewardManager` 不变。
+3. 先用一个简单 task 做 smoke test：`BATCH_SIZE=1`，`MAX_TURNS=3`。
+4. 检查 `AgentLoopOutput.extra_fields` 是否包含 `tool_rewards`、`turn_scores`、`trajectory`、`terminal_success`、`task_id`。
+5. 短 LoRA 训练前后各跑一次 RL8 benchmark。
+6. 训练闭环稳定后，再优化 PRM 质量或数据构造。
