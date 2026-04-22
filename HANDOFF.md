@@ -96,6 +96,155 @@ assert chosen_tokens[:len(prompt_tokens)] == prompt_tokens
 - `rl/train/train_dpo_lora_fixed.py` - 修复后的训练脚本
 - `rl/train/debug_trl_exact.py` - 调试 TRL tokenization 的脚本
 
+### Bug 5: DPO 数据长度不平衡 - Rejected 包含二进制垃圾 (2026-04-22)
+
+**问题**: Rejected 轨迹使用 `read` 工具读取 xlsx 文件，返回 ~2500 字符的二进制数据，导致 chosen/rejected 长度严重不平衡。
+
+**数据分析**:
+```
+Sample | Chosen tokens | Rejected tokens | Ratio
+-------|---------------|-----------------|------
+     0 |            94 |            2056 |  21.9x
+     1 |           424 |            2063 |   4.9x
+     2 |           149 |            2061 |  13.8x
+     3 |           498 |            2078 |   4.2x
+     4 |           611 |            2073 |   3.4x
+```
+
+**后果**:
+- 模型学到的是"不生成长回复"（长度偏好）
+- 而不是"xlsx 用 exec，不用 read"（工具选择）
+- 训练指标完美（loss → 0, 100% accuracy）但行为完全不变
+
+**修复方案**: 只保留第一个 assistant turn（tool_call），移除 tool result
+```python
+# 修复前：包含完整轨迹（3 messages）
+chosen_completion = chosen_msgs[1:]  # [assistant, tool]
+
+# 修复后：只保留 tool_call
+chosen_completion = [chosen_msgs[1]]  # [assistant]
+```
+
+**修复后数据平衡性**:
+```
+Average ratio: 0.4x (完美平衡)
+```
+
+**但是**：修复后 DPO 仍然失败（2.5% 分数），说明 DPO 无法从零激活新能力。
+
+### Bug 6: vLLM 启动前必须清理显存 (2026-04-22)
+
+**问题**: 多次训练/推理后，GPU 显存被占用但进程已结束，导致 vLLM 启动失败。
+
+**症状**:
+```
+ValueError: Free memory on device cuda:0 (0.75/44.4 GiB) on startup 
+is less than desired GPU memory utilization (0.95, 42.18 GiB)
+```
+
+**解决方案**: 启动 vLLM 前必须清理显存
+```bash
+# 1. 杀死所有 vLLM 进程
+pkill -9 -f vllm
+
+# 2. 清理所有 GPU 进程
+GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)
+for pid in $GPU_PIDS; do
+    kill -9 $pid
+done
+sleep 3
+
+# 3. 验证显存
+nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits
+```
+
+**已集成到**: `rl/scripts/start_vllm.sh`
+
+---
+
+## 🧪 Task 18 Spreadsheet Summary - DPO/SFT 实验 (2026-04-22)
+
+### 实验目标
+
+激活 Qwen3-1.7B 使用 `exec+pandas` 处理 xlsx 文件的能力（baseline 只会用 `read`）。
+
+### 实验结果
+
+| 方法 | 数据 | 配置 | 训练指标 | Benchmark | 工具使用 | 结论 |
+|------|------|------|---------|-----------|---------|------|
+| Baseline | - | Qwen3-1.7B | - | 2.5% | read (5次) | 从不用 exec |
+| DPO v2 | 16 pairs, 完整轨迹 | rank 32, 5 epochs | Loss → 3e-15 | 5.8% | read | Bug 5 影响 |
+| DPO v3 | 16 pairs, 只第一个turn | rank 32, 5 epochs | Loss → 0.01 | 2.5% | read (4次) | Bug 5 修复，但无效 |
+| SFT v1 | 20 teacher samples | rank 16, 3 epochs | Loss 2.0 → 1.8 | 2.5% | read (5次) | 完全失败 |
+
+### 核心发现
+
+1. **DPO 无法从零激活新能力**
+   - Baseline 只有 5% 的 exec 使用率
+   - DPO 是 preference optimization，不是 capability learning
+   - 无法将 5% 提升到 90%
+   - 需要先用 SFT 激活能力（>50%），再用 DPO 优化
+
+2. **SFT 也失败了**
+   - 数据量太少：20 个样本（需要 100-500）
+   - LoRA rank 太小：16（需要 64-128）
+   - 模型可能太小：1.7B（需要 4B+）
+
+3. **训练指标完美 ≠ 模型学会了**
+   - DPO v3: Loss → 0.01, Rewards margin 4.6, 100% accuracy
+   - 但 benchmark 仍然 2.5%，完全没学会
+   - 必须通过 benchmark 验证实际能力
+
+### 失败原因分析
+
+**为什么这么难激活 exec 能力？**
+
+1. **数据量严重不足**
+   - SFT: 20 samples vs 需要 100-500
+   - DPO: 16 pairs vs 需要 50-200
+
+2. **LoRA rank 太小**
+   - 使用 rank 16（避免 OOM）
+   - 标准做法：rank 64-128
+   - Rank 16 无法学习复杂的新工具选择模式
+
+3. **模型容量不足**
+   - Qwen3-1.7B 只有 1.7B 参数
+   - Baseline 只有 5% 的 exec 使用率
+   - 可能需要 4B+ 的模型
+
+4. **训练目标不匹配**
+   - 需要学习：看到 xlsx → 想到 exec+pandas
+   - 这是复杂的推理链，不是简单的模式匹配
+   - 可能需要更多中间步骤示例
+
+### 下一步建议
+
+**方案 A: 增加数据量 + 更大的 rank**
+- 生成 100+ SFT 样本
+- 使用 rank 64（需要更大的 GPU）
+- 预期：可能有效，但不确定
+
+**方案 B: 换更大的模型**
+- 使用 Qwen3-4B
+- Baseline 可能就会用 exec
+- 预期：更有可能成功
+
+**方案 C: 分析数据质量**
+- 检查 20 个 teacher samples 质量
+- 可能数据本身有问题
+
+**方案 D: 放弃 1.7B**
+- 1.7B 可能根本学不会这个任务
+- 直接用 4B
+
+### 相关文档
+
+- `rl/docs/runpod_setup_and_training.md` - 完整的环境配置和训练流程
+- `rl/data/generated/task_18_spreadsheet_summary_runtime/分析.md` - 详细的数据分析
+- `rl/train/train_sft_lora.py` - SFT 训练脚本
+- `rl/train/train_dpo_lora_fixed.py` - DPO 训练脚本（Bug 4, 5 修复）
+
 ---
 
 ## ⚠️ Qwen3 Tool Calls 支持 (重要澄清)

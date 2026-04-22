@@ -77,6 +77,12 @@ def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
             global_cfg = {}
     else:
         global_cfg = {}
+    reasoning_enabled = os.environ.get("OPENCLAW_MODEL_REASONING", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     global_cfg.setdefault("models", {}).setdefault("providers", {})[provider_name] = {
         "baseUrl": base_url,
         "apiKey": api_key or "dummy",
@@ -84,7 +90,7 @@ def _setup_openclaw(base_url: str, model: str, api_key: str | None) -> None:
         "models": [{
             "id": model_bare,
             "name": model_bare,
-            "reasoning": False,
+            "reasoning": reasoning_enabled,
             "input": ["text"],
             "contextWindow": 32768,
             "maxTokens": 8192,

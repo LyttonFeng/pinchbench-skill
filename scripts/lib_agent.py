@@ -36,6 +36,26 @@ def _openclaw_catalog_model_id(model_id: str) -> str:
     return s
 
 
+def _openclaw_provider_model_pair(model_id: str, *, base_url: str | None = None) -> tuple[str, str]:
+    """Resolve an OpenClaw provider/model pair for bench agent config.
+
+    Local vLLM/custom endpoints must stay under ``custom``. Cloud Qwen models
+    that already exist in the copied OpenClaw catalog must stay under ``qwen``;
+    forcing them to ``custom`` produces "Unknown model: custom/qwen3.6-plus".
+    """
+    mid = _openclaw_catalog_model_id(model_id)
+    if base_url:
+        return "custom", mid
+    if "/" in model_id:
+        provider, model = model_id.split("/", 1)
+        return provider, model
+    if mid in {"qwen-plus", "qwen3.6-plus"}:
+        return "dashscope", mid
+    if mid.startswith("qwen"):
+        return "qwen", mid
+    return "custom", mid
+
+
 def _patch_openclaw_agent_disable_model_fallbacks(agent_id: str, model_id: str) -> None:
     """OpenClaw merges global `agents.defaults.model` fallbacks when the agent's model is a plain string.
 
@@ -69,8 +89,11 @@ def _patch_openclaw_agent_disable_model_fallbacks(agent_id: str, model_id: str) 
             continue
         if eid != agent_id and eid.lower() != normalized:
             continue
-        mid = _openclaw_catalog_model_id(model_id)
-        entry["model"] = {"primary": f"custom/{mid}", "fallbacks": []}
+        provider, mid = _openclaw_provider_model_pair(
+            model_id,
+            base_url=os.environ.get("PINCHBENCH_MODEL_BASE_URL"),
+        )
+        entry["model"] = {"primary": f"{provider}/{mid}", "fallbacks": []}
         updated = True
         break
     if not updated:
@@ -84,8 +107,10 @@ def _patch_openclaw_agent_disable_model_fallbacks(agent_id: str, model_id: str) 
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", "utf-8")
         os.replace(tmp, path)
         logger.info(
-            "Patched OpenClaw config: agent %s model fallbacks disabled (PinchBench).",
+            "Patched OpenClaw config: agent %s model fallbacks disabled (PinchBench, primary=%s/%s).",
             agent_id,
+            provider,
+            mid,
         )
     except OSError as exc:
         logger.warning("Failed to write OpenClaw config %s: %s", path, exc)
@@ -380,9 +405,16 @@ def ensure_agent_exists(
     main_models = _get_openclaw_home() / "agents" / "main" / "agent" / "models.json"
 
     if base_url:
+        os.environ["PINCHBENCH_MODEL_BASE_URL"] = base_url
         # Custom OpenAI-compatible endpoint — build a provider entry
         key_ref = api_key if api_key else "dummy"
         mid = _openclaw_catalog_model_id(model_id)
+        reasoning_enabled = os.environ.get("OPENCLAW_MODEL_REASONING", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         custom_provider: dict[str, Any] = {
             "baseUrl": base_url,
             # pi-coding-agent (OpenClaw's embedded registry) requires a non-empty apiKey whenever
@@ -394,7 +426,7 @@ def ensure_agent_exists(
                 {
                     "id": mid,
                     "name": mid,
-                    "reasoning": False,
+                    "reasoning": reasoning_enabled,
                     "input": ["text"],
                     "contextWindow": OPENCLAW_CONTEXT_WINDOW,
                     "maxTokens": OPENCLAW_MAX_TOKENS,
@@ -418,14 +450,16 @@ def ensure_agent_exists(
             agent_id,
         )
     elif main_models.exists():
+        os.environ.pop("PINCHBENCH_MODEL_BASE_URL", None)
         # Standard OpenRouter flow — copy main's models.json and set defaults
         import shutil as _shutil
         _shutil.copy2(main_models, bench_models)
-        if "/" in model_id:
-            provider_name, model_name = model_id.split("/", 1)
-            try:
-                raw = bench_models.read_text("utf-8-sig")
-                data = json.loads(raw)
+        provider_name, model_name = _openclaw_provider_model_pair(model_id)
+        try:
+            raw = bench_models.read_text("utf-8-sig")
+            data = json.loads(raw)
+            providers = data.get("providers")
+            if isinstance(providers, dict) and provider_name in providers:
                 data["defaultProvider"] = provider_name
                 data["defaultModel"] = model_name
                 bench_models.write_text(
@@ -434,8 +468,8 @@ def ensure_agent_exists(
                 logger.info(
                     "Set bench agent default model to %s / %s", provider_name, model_name
                 )
-            except Exception as exc:
-                logger.warning("Failed to set default model in bench models.json: %s", exc)
+        except Exception as exc:
+            logger.warning("Failed to set default model in bench models.json: %s", exc)
         logger.info("Copied main agent models.json to bench agent %s", agent_id)
 
     # Delete sessions.json so OpenClaw picks up the new defaultProvider/defaultModel
@@ -1300,11 +1334,12 @@ def run_openclaw_prompt(
             if _remote_openclaw_enabled():
                 host, user, port, ssh_key = _remote_openclaw_ssh_parts()
                 remote_prefix = _remote_openclaw_activate_prefix()
+                escaped_chunk = send_chunk.replace('"', '\\"')
                 remote_cmd_parts = [f"cd {workspace}"]
                 if remote_prefix:
                     remote_cmd_parts.append(remote_prefix)
                 remote_cmd_parts.extend([
-                    f"{openclaw_path} agent --agent {agent_id} --session-id {session_id} --message \"{send_chunk.replace('\"', '\\\"')}\" --local",
+                    f"{openclaw_path} agent --agent {agent_id} --session-id {session_id} --message \"{escaped_chunk}\" --local",
                 ])
                 remote_command = " && ".join(remote_cmd_parts)
                 result = subprocess.run(

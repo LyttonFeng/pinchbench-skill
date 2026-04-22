@@ -24,6 +24,42 @@ git push fork main
 ssh root@POD_IP -p POD_PORT -i ~/.ssh/id_ed25519
 ```
 
+### 1.1 SSH 操作规范：不要拼超长单行命令
+
+经验结论：
+
+- 不是 SSH 协议本身“不支持长命令”，而是**远端 shell + 多层 quoting + nohup/后台重定向**这一整套组合在 RunPod 上比较脆。
+- 尤其这类命令容易出问题：
+  - `cd ... && rm ... && nohup python ... > ... 2>&1 & echo $!`
+  - 带很多参数、重定向、`$!`、引号转义、后台 `&` 的超长单行
+
+后续统一按**短命令分步执行**：
+
+1. 先 `ssh` 检查目录/文件
+2. 再单独 `ssh` 清理旧输出
+3. 再单独 `ssh` 启动训练
+4. 再单独 `ssh` 查 `ps`
+5. 再单独 `ssh` `tail log`
+
+不要把这些塞进一条超长命令里。
+
+推荐风格：
+
+```bash
+ssh root@POD_IP -p POD_PORT -i ~/.ssh/id_ed25519 'cd /workspace/pinchbench-skill && ls rl/train'
+ssh root@POD_IP -p POD_PORT -i ~/.ssh/id_ed25519 'rm -rf /tmp/dpo_debug /tmp/dpo_debug.log'
+ssh root@POD_IP -p POD_PORT -i ~/.ssh/id_ed25519 'cd /workspace/pinchbench-skill && nohup python3 -u rl/train/train_dpo_lora_fixed.py ... > /tmp/dpo_debug.log 2>&1 & echo $!'
+ssh root@POD_IP -p POD_PORT -i ~/.ssh/id_ed25519 'ps -ef | grep train_dpo_lora_fixed.py | grep -v grep'
+ssh root@POD_IP -p POD_PORT -i ~/.ssh/id_ed25519 'tail -n 80 /tmp/dpo_debug.log'
+```
+
+原则：
+
+- 一条命令只做一件事
+- 避免多层 `&&` / `;` / `\$!` / 复杂 quoting
+- 优先 `python3 -u`，避免日志缓冲导致 `tail` 看不到 step
+- 如果某一步失败，先单独验证该步，不要继续把后续动作拼进去
+
 ---
 
 ## 2. Pod 上的路径约定（与 `rl/scripts/setup_new_pod.sh` 一致）

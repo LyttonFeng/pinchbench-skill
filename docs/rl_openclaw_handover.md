@@ -168,7 +168,7 @@ REWARD_MODE=self-judge
 REWARD_MODE=oracle-judge
 ```
 
-当前实验默认用 `self-judge`。如果要构造更干净的离线数据或更强标签，可以用 `oracle-judge`，通常接 `qwen-plus`。
+当前训练推荐用 `oracle-judge`。默认 judge 模型可以用更强的 `qwen3.6-plus`；如果只是做弱基线或本地调试，再切回 `self-judge`。
 
 ### 5. Per-Task EMA Baseline
 
@@ -582,6 +582,51 @@ ROLLOUT_LAYERED_SUMMON=False
 collect_lora_params done count=392
 ```
 
+LoRA 空集合问题的最终处理：
+
+```text
+不要把空 LoRA skip 后继续训练。
+空 LoRA = vLLM 没收到 policy delta = 训练无效。
+```
+
+当 `layered_summon=True` 时，典型错误链路是：
+
+```text
+checkpoint_manager.update_weights()
+  -> vLLMHttpServer.collective_rpc()
+  -> add_lora()
+  -> LoRAModelManager._create_merged_loras_inplace()
+  -> StopIteration
+```
+
+诊断日志：
+
+```text
+[vllm_lora_debug] vLLM _update_weights count=0 base_sync_done=True has_peft_config=True sample=[]
+empty LoRA model reached vLLM merge path
+```
+
+修复方式：
+
+```bash
+export ROLLOUT_LAYERED_SUMMON=False
+```
+
+此时 veRL 不走 `layered_summon_lora_params()` 的 prefix 扫描路径，而是走普通 `FSDP.summon_full_params + get_peft_model_state_dict()`，能拿到非空 LoRA。
+
+训练和保存都要看到：
+
+```text
+collect_lora_params done count=392
+[pinchbench_lora_only_ckpt] saved 392 LoRA tensors
+```
+
+并确认 checkpoint 不为空：
+
+```text
+actor/lora_adapter/adapter_model.safetensors 约 139MB
+```
+
 当前问题：
 
 - think-mode 训练在长轨迹下会在 `loss.backward()` OOM。
@@ -605,7 +650,7 @@ torch.OutOfMemoryError: CUDA out of memory. Tried to allocate ~8.04 GiB
 - 长工具轨迹会产生 20k+ training sequence。
 - backward peak memory 超过 44GB GPU。
 
-建议下一轮训练：
+当前推荐的训练顺序是：
 
 ```bash
 BATCH_SIZE=1
@@ -613,14 +658,10 @@ MICRO_BATCH=1
 MAX_TURNS=8
 MAX_RESPONSE_LENGTH=<必要时低于 12000>
 ROLLOUT_LAYERED_SUMMON=False
-OPENCLAW_MODEL_REASONING=1
-```
-
-或者先跑 no-think 稳定 LoRA baseline：
-
-```bash
 OPENCLAW_MODEL_REASONING=0
 ```
+
+先用 non-think 把训练闭环跑通，再单独做 think / non-think 对照。
 
 ### Qwen3.5-2B
 
@@ -678,16 +719,16 @@ whitened = (values - mean) * torch.rsqrt(var + 1.0)
 
 ## 当前训练命令模板
 
-Qwen3-1.7B think 的相对安全版本：
+Qwen3-1.7B non-think 的相对安全版本：
 
 ```bash
 cd /workspace/pinchbench-skill
 OPENCLAW_HOST=8.163.82.224 \
 OPENCLAW_PORT=22 \
 OPENCLAW_USER=root \
-OPENCLAW_MODEL_REASONING=1 \
+OPENCLAW_MODEL_REASONING=0 \
 VERL_MODEL=Qwen/Qwen3-1.7B \
-RUN_VERSION=qwen31_think_bt1_turn8 \
+RUN_VERSION=qwen31_nonthink_bt1_turn8 \
 TOTAL_TRAINING_STEPS=16 \
 BATCH_SIZE=1 \
 MICRO_BATCH=1 \
@@ -699,7 +740,7 @@ PRM_VLLM_BASE_URL=http://localhost:8000/v1 \
 HYDRA_FULL_ERROR=1 \
 ROLLOUT_LAYERED_SUMMON=False \
 VLLM_MAX_MODEL_LEN=40960 \
-bash rl/train/run_reinforce_lora.sh 2>&1 | tee /tmp/train_qwen31_think_bt1_turn8.log
+bash rl/train/run_reinforce_lora.sh 2>&1 | tee /tmp/train_qwen31_nonthink_bt1_turn8.log
 ```
 
 ## JiuwenClaw 需要实现什么

@@ -131,16 +131,71 @@ Rubric 修复要点：
 
 ---
 
-## 五、当前状态
+## 五、实验记录（run id / 结果文件）
 
-- v3 训练已于 2026-04-16 在 RunPod 启动（tmux: `train_v3`，checkpoint: `reinforce_lora_v3/`）
-- v2 step6 LoRA 已备份至 `rl/checkpoints/reinforce_lora_v2_step6_lora_backup`
-- 每 2 steps 保存一次，step 2/4/6/8 自动跑 val
-- 成功标准：val-core 超过 v1 的 66%，且无退化趋势
+### Benchmark Run 对照表
+
+| run id | 版本 / checkpoint | 总分 | 结果文件 | transcript 目录 | 备注 |
+|--------|------------------|------|----------|----------------|------|
+| 0057 | baseline Qwen3-4B（DDG，旧环境） | 50.4% | `results/0057_qwen3-4b.json` | `results/0057_transcripts/` | 旧 baseline，DDG 搜索拉低 task_02 |
+| 0088 | v4.2 step8 | 52.6% | `results/0088_qwen3-4b.json` | `results/0088_transcripts/` | self-judge PRM，几乎无提升 |
+| 0089 | v4.3 step8 | 50.1% | `results/0089_qwen3-4b.json` | `results/0089_transcripts/` | terminal-only，step8 |
+| 0090 | v4.3 step12（DDG） | 54.8% | `results/0090_qwen3-4b.json` | `results/0090_transcripts/` | terminal-only，step12（DDG 返回广告，task_02=0） |
+| 0091 | v4.3 step12（task_02 单题验证） | 100% | `results/0091_qwen3-4b.json` | `results/0091_transcripts/` | 配置 Brave API key 后 task_02 修复验证 |
+| 0093 | v4.3 step12 + Brave | 69.6% | `results/0093_qwen3-4b.json` | `results/0093_transcripts/` | Brave fix 后首次完整 RL8 |
+| **0095** | **baseline Qwen3-4B（Brave）run1** | **70.4%** | `results/0095_qwen3-4b.json` | `results/0095_transcripts/` | 新 baseline #1 |
+| **0096** | **baseline Qwen3-4B（Brave）run2** | **53.9%** | `results/0096_qwen3-4b.json` | `results/0096_transcripts/` | 新 baseline #2 |
+| **0100** | **baseline Qwen3-4B（Brave）run3** | **69.7%** | `results/0100_qwen3-4b.json` | `results/0100_transcripts/` | 新 baseline #3；均值 64.7% |
+| **0097** | **v4.3 LoRA step12（Brave）run1** | **57.6%** | `results/0097_qwen3-4b.json` | `results/0097_transcripts/` | LoRA run1 |
+| **0098** | **v4.3 LoRA step12（Brave）run2** | **68.1%** | `results/0098_qwen3-4b.json` | `results/0098_transcripts/` | LoRA run2 |
+| **0099** | **v4.3 LoRA step12（Brave）run3** | **63.9%** | `results/0099_qwen3-4b.json` | `results/0099_transcripts/` | LoRA run3；均值 63.2% |
+
+> compare/ 目录下的命名快照：`results/compare/` 存有各版本对比用的 json/transcript 副本，命名规则为 `{prefix}.json`。
+
+### v1 历史最佳 checkpoint
+
+| 描述 | run id | 总分 |
+|------|--------|------|
+| v1 step8（历史最佳，旧 SOTA） | compare/lora_rl8_step8_qwen3_4b | 66.0% |
+| v1 step12 | compare/lora_rl8_step12_qwen3_4b | 63.8% |
+
+### 环境修复记录
+
+| 日期 | 问题 | 修复 | 影响 |
+|------|------|------|------|
+| 2026-04-17 | `web_search` 用 DDG HTML scraper，对 stock 查询返回广告而非价格 | 配置 `BRAVE_API_KEY` 写入 `.env`，OpenClaw 自动使用 Brave Search | task_02 从 0% → 100% |
 
 ---
 
-## 六、一句话总结
+## 六、当前状态（2026-04-17）
+
+### 新 baseline vs v4.3 LoRA（各 3 次，Brave search 环境）
+
+**结论：单次方差 ±16pp，必须多次平均。3次均值：baseline 64.7% vs v4.3 LoRA 63.2%，整体无显著差异。**
+旧 baseline 0057（50.4%）被 DDG 广告拉低，不再使用。
+
+| 任务 | BL r1 | BL r2 | BL r3 | **BL均值** | LoRA r1 | LoRA r2 | LoRA r3 | **LoRA均值** | 差值 |
+|------|:-----:|:-----:|:-----:|:---------:|:-------:|:-------:|:-------:|:-----------:|:----:|
+| task_02_stock | 100% | 67% | 100% | **89%** | 100% | 100% | 100% | **100%** | +11% ✅ |
+| task_10_workflow | 77% | 77% | 84% | **79%** | 52% | 71% | 75% | **66%** | -13% ❌ |
+| task_12_skill_search | 33% | 0% | 0% | **11%** | 0% | 0% | 0% | **0%** | -11% ❌ |
+| task_16_email_triage | 93% | 88% | 92% | **91%** | 89% | 100% | 93% | **94%** | +3% |
+| task_18_market_research | 75% | 78% | 83% | **79%** | 81% | 78% | 83% | **81%** | +2% |
+| task_18_spreadsheet | 35% | 0% | 35% | **23%** | 35% | 38% | 35% | **36%** | +13% ✅ |
+| task_22_second_brain | 100% | 100% | 100% | **100%** | 100% | 100% | 100% | **100%** | 0% |
+| task_24_polymarket | 50% | 21% | 63% | **45%** | 4% | 58% | 25% | **29%** | -16% ❌ |
+| **总分** | **70.4%** | **53.9%** | **69.7%** | **64.7%** | **57.6%** | **68.1%** | **63.9%** | **63.2%** | **-1.5pp** |
+
+task_02 LoRA 稳定 100%（3/3），baseline 有波动（2/3）——RL 训练对 stock 任务有效。
+task_10/task_24 LoRA 退化明显，可能 RL 训练强化了某些任务的错误策略。
+
+- v4.4（self-judge PRM，其余同 v4.3）待启动
+- Brave API key 已写入 `.env`（gitignored），后续所有 benchmark 自动生效
+- v4.3 checkpoint：`rl/checkpoints/reinforce_lora_v4.3/global_step_12`（RunPod）
+
+---
+
+## 七、一句话总结
 
 > 三版实验验证了 REINFORCE++ + LoRA 在 live-user agent 场景的有效性（v1 +15.6 pp），并逐步定位到 rubric 质量是 PRM 训练的核心瓶颈；v3 在修复 rubric 的同时加强 terminal 信号权重，目标是在 8 steps 内稳定超越 v1。
 

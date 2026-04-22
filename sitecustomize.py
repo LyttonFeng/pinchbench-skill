@@ -60,6 +60,43 @@ def _maybe_patch_verl_lora_only_ckpt() -> None:
         print(f"[sitecustomize] LoRA-only checkpoint patch skipped: {e}", file=sys.stderr)
 
 
+def _maybe_patch_qwen3_5_config_alias() -> None:
+    """Make Transformers 4.x route qwen3_5 checkpoints through the local compatibility shim."""
+    try:
+        from rl.transformers_qwen3_5_patch import apply_patch
+
+        apply_patch()
+    except Exception as e:
+        import sys
+
+        print(f"[sitecustomize] qwen3_5 config alias skipped: {e}", file=sys.stderr)
+
+
+def _maybe_patch_qwen3_5_generation_config() -> None:
+    try:
+        from rl.verl_qwen3_5_generation_patch import apply_patch
+
+        apply_patch()
+    except Exception as e:
+        import sys
+
+        print(f"[sitecustomize] qwen3_5 generation config patch skipped: {e}", file=sys.stderr)
+
+
+def _maybe_patch_vllm_lora_empty_guard() -> None:
+    try:
+        from rl.verl_vllm_lora_empty_guard_patch import apply_patch
+
+        apply_patch()
+    except Exception as e:
+        import sys
+
+        print(f"[sitecustomize] vllm lora empty guard patch skipped: {e}", file=sys.stderr)
+
+
 _maybe_patch_verl_debug_metrics()
 _maybe_patch_verl_best_ckpt()
 _maybe_patch_verl_lora_only_ckpt()
+_maybe_patch_qwen3_5_config_alias()
+_maybe_patch_qwen3_5_generation_config()
+_maybe_patch_vllm_lora_empty_guard()

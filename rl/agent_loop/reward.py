@@ -69,7 +69,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Verify the file exists and contains the required ticker token",
         ],
         "common_mistakes": [
-            "Refusing to create stock_report.txt with a message like 'cannot retrieve real-time prices due to privacy constraints' — this is the worst outcome; the grader requires the file to exist; use whatever search results you have, note limitations, and write the file",
+            "Not writing stock_report.txt at all — the file must exist regardless of search quality; write with best available data and note any limitations",
             "Answering from memory or text-only before checking current AAPL data",
             "Writing only 'Apple' or company name without the literal token AAPL (automated grader checks \\bAAPL\\b)",
             "Searching but never writing the file (premature termination)",
@@ -94,8 +94,8 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Calling read('config/*') or any glob/wildcard path — the read tool requires exact filenames; instead call read on each file directly by name (config/settings.json and config/database.yml are given in the task prompt)",
             "Giving up and asking the user to confirm the path after a single ENOENT error — when the files are listed in the task prompt, use those exact paths directly without wildcards",
             "Skipping inspection and jumping straight to edit without first reading both files to understand their exact structure",
-            "Repeating the same failing edit call (same oldText) without adding more surrounding context to disambiguate duplicate field names — database.yml has 'host: localhost' in both development and test blocks, so the oldText must include enough surrounding lines to be unique",
-            "Not switching strategy after an edit fails: if 'Found N occurrences' error appears, the fix is to include the parent block header (e.g. 'development:\\n  host: localhost') in oldText, not to retry the same short oldText",
+            "Repeating the same failing edit call (same oldText) without adding more surrounding context to disambiguate duplicate field names — when a YAML/JSON file has the same key in multiple blocks, the oldText must include enough surrounding lines to be unique",
+            "Not switching strategy after an edit fails: if 'Found N occurrences' error appears, the fix is to include the parent block header in oldText to make the match unique, not to retry the same short oldText",
             "Missing one file or one replacement class (localhost, DB name, log level, API URL)",
             "Not verifying with read after edits to confirm all replacements landed correctly",
         ],
@@ -126,7 +126,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "qwen_plus_stats": "4 turns, 3 tool calls. Python: 1704 bytes, NOTES: 1389 bytes.",
     },
     "task_22_second_brain": {
-        "goal": "Multi-session task (OpenClaw sessions in frontmatter): Session 1 — write user facts to memory/MEMORY.md (Rust, Jan 15 2024, Dr. Elena Vasquez, NeonDB, secret phrase). Session 2 — answer language + project from file. Session 3 (new session) — read MEMORY.md and answer all 5 recall questions. Matches PinchBench hybrid grader.",
+        "goal": "Multi-session task: Session 1 — write the user facts provided in the task prompt to memory/MEMORY.md. Session 2 — answer follow-up questions by reading from the file. Session 3 (new session) — read MEMORY.md and answer all recall questions accurately from the stored facts.",
         "optional_hints": (
             "Useful signals: the agent persists the required facts correctly with a tool, retrieves them from MEMORY.md "
             "in a fresh session, and answers every recall item consistently from saved memory."
@@ -147,7 +147,7 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         "qwen_plus_stats": "Multi-session; ~3 OpenClaw session invocations per benchmark run.",
     },
     "task_16_email_triage": {
-        "goal": "Read all 13 files in inbox/ (email_01.txt … email_13.txt), then write triage_report.md: top summary + day plan; for each email assign Priority P0–P4, Category (incident/client/internal-request/administrative/code-review/automated/newsletter/spam), and recommended action; sort entries by priority (most urgent first). PinchBench checks: production outage email as P0; monitoring alert tied to same incident; BigClient email P0/P1; promotional/spam email P4; report structure and summary section.",
+        "goal": "Read all emails in inbox/ directory, then write triage_report.md: top summary + day plan; for each email assign Priority P0–P4, Category (incident/client/internal-request/administrative/code-review/automated/newsletter/spam), and recommended action; sort entries by priority (most urgent first). PinchBench checks: production outage email as P0; monitoring alert tied to same incident; high-value client email P0/P1; promotional/spam email P4; report structure and summary section.",
         "optional_hints": (
             "Useful signals: the agent covers the whole inbox with read tools before writing, correctly flags the urgent "
             "incident and big-client mail, and produces a report whose priorities match the content."
@@ -160,11 +160,11 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
         ],
         "common_mistakes": [
             "Starting the report from memory or after only a partial inbox read",
-            "Writing triage_report.md before reading all 13 emails or omitting any email from the report",
+            "Writing triage_report.md before reading all emails in inbox/ or omitting any email from the report",
             "Missing file triage_report.md or wrong filename",
-            "Production database outage / CTO war-room email not labeled P0",
-            "API latency monitoring alert (email 13) not linked or grouped with the DB outage incident",
-            "BigClient / $2M contract email not P0 or P1",
+            "Production outage / critical incident email not labeled P0",
+            "Monitoring alert related to the same incident not linked or grouped with the outage",
+            "High-value client email not P0 or P1",
             "Promotional flash-sale / spam-like email not P4 or lowest tier",
             "Report not sorted by priority (most urgent first) or missing the executive summary/day plan",
             "Missing per-email recommended action or category keywords the grader expects",
@@ -238,9 +238,9 @@ TASK_RUBRICS: dict[str, dict[str, Any]] = {
             "Avoid inventing market names, odds, or sources",
         ],
         "common_mistakes": [
-            "Writing the wrong year/date in the report header (e.g. '2023-10-25') — the header must show today's actual date; never use dates from training memory",
-            "Falling back to 2023-era Polymarket training knowledge when web search returns poor results — 2023 markets (FTX, Iran ceasefire from that era, Bitcoin $50K Dec 2023) are stale and will fail grading; do additional targeted searches instead",
-            "Stopping after 2 search attempts when both returned poor results — try at least 3–4 different queries (e.g. 'polymarket trending 2026', 'gamma.io markets', specific topic searches) before writing",
+            "Writing an incorrect date in the report header — the header must show today's actual date, not a date from memory or training data",
+            "Falling back to stale training knowledge when web search returns poor results — do additional targeted searches instead of writing from memory",
+            "Stopping after 1–2 failed searches — try at least 3–4 different queries before writing",
             "Guessing markets or odds before checking a source",
             "Hallucinated market names or odds",
             "News not tied to the market or not recent",
@@ -275,6 +275,38 @@ _GENERIC_RUBRIC = {
 _TASK_ID_ALIASES: dict[str, str] = {
     "task_19_spreadsheet_summary": "task_18_spreadsheet_summary",
 }
+
+# Tasks where the target file must exist in workspace for the episode to count as "tried".
+# If terminal_success=False AND the file is absent → the model fabricated completion or gave up
+# without writing → terminal reward = -1.0 (instead of 0.0) to penalize reward hacking.
+_FILE_REQUIRED_TASKS: dict[str, str] = {
+    "task_02_stock": "stock_report.txt",
+    "task_12_skill_search": "config/settings.json",  # must have been modified (file always pre-exists, so absence = workspace not set up; skip penalty)
+    "task_18_spreadsheet_summary": "data_summary.md",
+    "task_19_spreadsheet_summary": "data_summary.md",
+}
+
+# For task_12, the workspace files are pre-seeded so "file absent" just means setup failed.
+# We only apply -1 penalty when the file is supposed to be CREATED by the agent.
+_FILE_CREATED_BY_AGENT: set[str] = {"task_02_stock", "task_18_spreadsheet_summary", "task_19_spreadsheet_summary"}
+
+
+def _terminal_reward_raw(terminal_success: bool, task_id: str, workspace_path: str = "") -> float:
+    """Return terminal reward scalar: +1 (success), 0 (failed but tried), -1 (fabricated completion).
+
+    -1 is only applied when:
+      - terminal_success is False
+      - task requires the agent to CREATE a specific file
+      - that file is absent from the workspace (agent never called write)
+    """
+    if terminal_success:
+        return 1.0
+    if workspace_path and task_id in _FILE_CREATED_BY_AGENT:
+        from pathlib import Path
+        target = _FILE_REQUIRED_TASKS.get(_canonical_task_id_for_rubric(task_id))
+        if target and not (Path(workspace_path) / target).exists():
+            return -1.0
+    return 0.0
 
 
 def _canonical_task_id_for_rubric(task_id: str) -> str:
@@ -372,6 +404,39 @@ def _resolve_judge_model_sync(vllm_base_url: str, desired_model: str) -> str:
     if resolved != desired_model:
         logger.info("Resolved judge model %s -> %s from %s", desired_model, resolved, endpoint)
     return resolved
+
+
+def _should_resolve_judge_model(base_url: str) -> bool:
+    override = os.environ.get("PRM_RESOLVE_MODEL", "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+
+    # Only resolve against local vLLM. External OpenAI-compatible providers may
+    # not expose /models, and resolving qwen3.6-plus to the local training model
+    # silently turns oracle-judge back into self-judge.
+    normalized = base_url.rstrip("/").lower()
+    return (
+        "localhost" in normalized
+        or "127.0.0.1" in normalized
+        or normalized.startswith("http://172.")
+        or normalized.startswith("http://10.")
+        or normalized.startswith("http://192.168.")
+    )
+
+
+def _parse_judge_score(text: str, *, sync: bool = False) -> float:
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    result = json.loads(text)
+    score = float(result.get("score", 0.0))
+    reason = result.get("reason", "")
+    if not sync:
+        print(f"[PRM] Judge scored: {score:.2f}, reason: {reason}")
+    return max(-0.5, min(0.2, score))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -496,34 +561,52 @@ async def call_llm_judge(
     api_key: str = "dummy",
     timeout: float = 30.0,
 ) -> float:
-    """Call LLM (Qwen3-4B via vLLM) to score a single turn.
+    """Call an LLM judge to score a single turn.
 
-    Uses /v1/completions (text completion) because veRL's vLLMHttpServer
-    does not expose /v1/chat/completions.
+    Local vLLM uses /v1/completions because veRL's vLLMHttpServer does not
+    expose /v1/chat/completions. External OpenAI-compatible judges use chat.
 
     Returns score in [-0.5, +0.2]. Falls back to 0.0 on any error.
     """
     import aiohttp
 
-    full_prompt = (
-        "<|im_start|>system\nYou are a strict scoring function. "
-        "Respond with ONLY a JSON object. No thinking, no explanation.<|im_end|>\n"
-        f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        "<|im_start|>assistant\n<think>\n\n</think>\n"
-    )
-
-    payload = {
-        "model": model,
-        "prompt": full_prompt,
-        "temperature": 0.1,
-        "max_tokens": 64,
-        "stop": ["<|im_end|>"],
+    use_chat = os.environ.get("PRM_USE_CHAT_COMPLETIONS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
     }
+    if use_chat:
+        endpoint = f"{vllm_base_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a strict scoring function. Respond with ONLY a JSON object."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 128,
+        }
+    else:
+        endpoint = f"{vllm_base_url.rstrip('/')}/completions"
+        full_prompt = (
+            "<|im_start|>system\nYou are a strict scoring function. "
+            "Respond with ONLY a JSON object. No thinking, no explanation.<|im_end|>\n"
+            f"<|im_start|>user\n{prompt}<|im_end|>\n"
+            "<|im_start|>assistant\n<think>\n\n</think>\n"
+        )
+        payload = {
+            "model": model,
+            "prompt": full_prompt,
+            "temperature": 0.1,
+            "max_tokens": 64,
+            "stop": ["<|im_end|>"],
+        }
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{vllm_base_url}/completions",
+                endpoint,
                 json=payload,
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=aiohttp.ClientTimeout(total=timeout),
@@ -538,15 +621,9 @@ async def call_llm_judge(
         return 0.0
 
     try:
-        text = data["choices"][0]["text"].strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        result = json.loads(text)
-        score = float(result.get("score", 0.0))
-        reason = result.get("reason", "")
-        print(f"[PRM] Judge scored: {score:.2f}, reason: {reason}")
-        return max(-0.5, min(0.2, score))
+        choice = data["choices"][0]
+        text = choice.get("message", {}).get("content", "") if use_chat else choice.get("text", "")
+        return _parse_judge_score(text)
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
         logger.warning("PRM judge parse failed: %s, raw: %s", e, text[:200] if 'text' in dir() else "N/A")
         return 0.0
@@ -559,26 +636,45 @@ def call_llm_judge_sync(
     api_key: str = "dummy",
     timeout: float = 30.0,
 ) -> float:
-    """Synchronous wrapper for call_llm_judge (uses /v1/completions)."""
+    """Synchronous wrapper for call_llm_judge."""
     from urllib import request as urllib_request
 
-    full_prompt = (
-        "<|im_start|>system\nYou are a strict scoring function. "
-        "Respond with ONLY a JSON object. No thinking, no explanation.<|im_end|>\n"
-        f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        "<|im_start|>assistant\n<think>\n\n</think>\n"
-    )
-
-    payload = json.dumps({
-        "model": model,
-        "prompt": full_prompt,
-        "temperature": 0.1,
-        "max_tokens": 64,
-        "stop": ["<|im_end|>"],
-    }).encode("utf-8")
+    use_chat = os.environ.get("PRM_USE_CHAT_COMPLETIONS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if use_chat:
+        endpoint = f"{vllm_base_url.rstrip('/')}/chat/completions"
+        payload_obj = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a strict scoring function. Respond with ONLY a JSON object."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 128,
+        }
+    else:
+        endpoint = f"{vllm_base_url.rstrip('/')}/completions"
+        full_prompt = (
+            "<|im_start|>system\nYou are a strict scoring function. "
+            "Respond with ONLY a JSON object. No thinking, no explanation.<|im_end|>\n"
+            f"<|im_start|>user\n{prompt}<|im_end|>\n"
+            "<|im_start|>assistant\n<think>\n\n</think>\n"
+        )
+        payload_obj = {
+            "model": model,
+            "prompt": full_prompt,
+            "temperature": 0.1,
+            "max_tokens": 64,
+            "stop": ["<|im_end|>"],
+        }
+    payload = json.dumps(payload_obj).encode("utf-8")
 
     req = urllib_request.Request(
-        f"{vllm_base_url}/completions",
+        endpoint,
         data=payload,
         headers={
             "Content-Type": "application/json",
@@ -595,13 +691,9 @@ def call_llm_judge_sync(
         return 0.0
 
     try:
-        text = data["choices"][0]["text"].strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        result = json.loads(text)
-        score = float(result.get("score", 0.0))
-        return max(-0.5, min(0.2, score))
+        choice = data["choices"][0]
+        text = choice.get("message", {}).get("content", "") if use_chat else choice.get("text", "")
+        return _parse_judge_score(text, sync=True)
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
         logger.warning("PRM judge sync parse failed: %s", e)
         return 0.0
@@ -814,6 +906,7 @@ async def compute_episode_rewards_async(
     vllm_base_url: str = "http://localhost:9090/v1",
     judge_model: str = "Qwen3-4B",
     judge_api_key: str = "dummy",
+    workspace_path: str = "",
 ) -> list[float]:
     """Compute per-assistant-turn rewards for a full episode (async version).
 
@@ -826,12 +919,13 @@ async def compute_episode_rewards_async(
         vllm_base_url: vLLM endpoint for self-judge
         judge_model: model name for judge calls
         judge_api_key: API key for judge calls
+        workspace_path: local path to task workspace (used for file-absence penalty)
 
     Returns:
         List of rewards, one per assistant turn. Terminal reward added to last.
     """
-    terminal_reward_raw = 1.0 if terminal_success else 0.0  # {0,+1}: no negative gradient for failures
-    terminal_reward = TERMINAL_REWARD_WEIGHT * terminal_reward_raw
+    raw = _terminal_reward_raw(terminal_success, task_id, workspace_path)
+    terminal_reward = TERMINAL_REWARD_WEIGHT * raw
 
     assistant_indices = [
         i for i, t in enumerate(trajectory) if t.get("role") == "assistant"
@@ -843,7 +937,8 @@ async def compute_episode_rewards_async(
     # Get expected number of turns from rubric
     rubric = _get_task_rubric(task_id)
     expected_turns = len(rubric.get("reference_steps", [4]))
-    judge_model = await _resolve_judge_model_async(vllm_base_url, judge_model)
+    if _should_resolve_judge_model(vllm_base_url):
+        judge_model = await _resolve_judge_model_async(vllm_base_url, judge_model)
 
     rewards = []
 
@@ -895,8 +990,8 @@ async def compute_episode_rewards_async(
         r = max(-0.5, min(0.2, r))
         rewards.append(r)
 
-    # Add terminal reward to last turn
-    rewards[-1] += terminal_reward
+    # Add terminal reward to every turn so all turns share credit for episode outcome
+    rewards = [r + terminal_reward for r in rewards]
 
     return rewards
 
@@ -910,13 +1005,14 @@ def compute_episode_rewards(
     vllm_base_url: str = "http://localhost:9090/v1",
     judge_model: str = "Qwen3-4B",
     judge_api_key: str = "dummy",
+    workspace_path: str = "",
 ) -> list[float]:
     """Synchronous version of compute_episode_rewards.
 
     For modes requiring LLM calls, uses sync HTTP.
     """
-    terminal_reward_raw = 1.0 if terminal_success else 0.0  # {0,+1}: no negative gradient for failures
-    terminal_reward = TERMINAL_REWARD_WEIGHT * terminal_reward_raw
+    raw = _terminal_reward_raw(terminal_success, task_id, workspace_path)
+    terminal_reward = TERMINAL_REWARD_WEIGHT * raw
 
     assistant_indices = [
         i for i, t in enumerate(trajectory) if t.get("role") == "assistant"
@@ -927,7 +1023,8 @@ def compute_episode_rewards(
 
     rubric = _get_task_rubric(task_id)
     expected_turns = len(rubric.get("reference_steps", [4]))
-    judge_model = _resolve_judge_model_sync(vllm_base_url, judge_model)
+    if _should_resolve_judge_model(vllm_base_url):
+        judge_model = _resolve_judge_model_sync(vllm_base_url, judge_model)
 
     rewards = []
 
@@ -974,7 +1071,8 @@ def compute_episode_rewards(
         r = max(-0.5, min(0.2, r))
         rewards.append(r)
 
-    rewards[-1] += terminal_reward
+    # Add terminal reward to every turn so all turns share credit for episode outcome
+    rewards = [r + terminal_reward for r in rewards]
     return rewards
 
 

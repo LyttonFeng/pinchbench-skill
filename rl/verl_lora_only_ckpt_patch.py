@@ -90,11 +90,22 @@ def apply_patch() -> None:
         try:
             if fw.fsdp_version(self.actor_module_fsdp) > 0:
                 self.actor_module_fsdp = self.actor_module_fsdp.to(fw.get_device_name())
-                lora_params = fw.layered_summon_lora_params(self.actor_module_fsdp)
+                layered_summon = str(getattr(getattr(self, "config", None), "rollout", {}).get("layered_summon", False)).lower()
+                lora_params = fw.collect_lora_params(
+                    self.actor_module_fsdp,
+                    layered_summon=layered_summon in {"1", "true", "yes", "on"},
+                    base_sync_done=True,
+                )
                 if fw.dist.get_rank() == 0:
+                    if not lora_params:
+                        raise RuntimeError(
+                            "LoRA-only checkpoint collected zero LoRA tensors; "
+                            "refusing to write an empty adapter_model.safetensors"
+                        )
                     fw.save_file(lora_params, str(lora_save_path / "adapter_model.safetensors"))
                     with (lora_save_path / "adapter_config.json").open("w", encoding="utf-8") as f:
                         fw.json.dump(peft_config, f, ensure_ascii=False, indent=4)
+                    print(f"[pinchbench_lora_only_ckpt] saved {len(lora_params)} LoRA tensors")
         except Exception as e:
             print(f"[pinchbench_lora_only_ckpt] Save LoRA adapter error: {e}")
             raise

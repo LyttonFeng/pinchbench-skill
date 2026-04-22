@@ -64,23 +64,27 @@ _TURN_EMA_INIT = float(os.environ.get("PINCHBENCH_TASK_EMA_INIT", "0.5"))
 def _normalize_turn_rewards(task_id: str, per_turn_rewards: list[float]) -> list[float]:
     """Center per-turn rewards around this task's EMA baseline.
 
-    Subtracts baseline/n from every turn so the episode sum = raw_total - baseline.
-    - Always-failing task (raw_total → 0, baseline → 0): advantage → 0, no gradient.
-    - Improving task (raw_total > baseline): positive advantages, learning signal.
-    - Consistently high task (raw_total ≈ baseline): advantages → 0, converged.
+    Tracks mean per-turn reward (not sum) so the baseline is independent of
+    episode length. Subtracts baseline from every turn.
+    veRL's mini-batch advantage normalization is disabled (norm_adv_by_std_in_grpo=False)
+    so no std division is needed here.
+
+    - Always-failing task (raw_mean → 0, baseline → 0): advantage → 0, no gradient.
+    - Improving task (raw_mean > baseline): positive advantages, learning signal.
+    - Consistently high task (raw_mean ≈ baseline): advantages → 0, converged.
     """
     if not per_turn_rewards:
         return per_turn_rewards
-    raw_total = sum(per_turn_rewards)
+    raw_mean = sum(per_turn_rewards) / len(per_turn_rewards)
     if task_id not in _turn_task_ema:
         _turn_task_ema[task_id] = _TURN_EMA_INIT
     baseline = _turn_task_ema[task_id]
-    _turn_task_ema[task_id] = (1.0 - _TURN_EMA_ALPHA) * baseline + _TURN_EMA_ALPHA * raw_total
-    baseline_per_turn = baseline / len(per_turn_rewards)
-    normalized = [r - baseline_per_turn for r in per_turn_rewards]
+    _turn_task_ema[task_id] = (1.0 - _TURN_EMA_ALPHA) * baseline + _TURN_EMA_ALPHA * raw_mean
+
+    normalized = [r - baseline for r in per_turn_rewards]
     logger.debug(
-        "[EMA] task=%s raw_total=%.3f baseline=%.3f baseline_per_turn=%.3f normalized_sum=%.3f",
-        task_id, raw_total, baseline, baseline_per_turn, sum(normalized),
+        "[EMA] task=%s raw_mean=%.3f baseline=%.3f normalized_sum=%.3f",
+        task_id, raw_mean, baseline, sum(normalized),
     )
     return normalized
 
@@ -236,7 +240,11 @@ class OpenClawAgentLoop(AgentLoopBase):
             max_prompt_tokens: int,
             tools: Optional[list[dict]] = None,
         ) -> list[dict[str, Any]]:
-            """Trim oldest complete turns until the prompt fits the context budget."""
+            """Trim oldest complete turns until the prompt fits the context budget.
+
+            IMPORTANT: Uses LIFO (drop newest turns) instead of FIFO to preserve
+            early turns where critical tool calls (like exec) often appear.
+            """
             if max_prompt_tokens <= 0 or not messages_in:
                 return messages_in
 
@@ -249,25 +257,33 @@ class OpenClawAgentLoop(AgentLoopBase):
             prefix = messages_in[:assistant_indices[0]]
             turn_starts = assistant_indices[:]
             candidate = list(messages_in)
+
+            # LIFO: drop from the END instead of the beginning
             while turn_starts:
                 prompt_ids = await self.apply_chat_template(candidate, tools=tools)
                 if len(prompt_ids) <= max_prompt_tokens:
                     return candidate
 
-                drop_start = turn_starts[0]
-                drop_end = turn_starts[1] if len(turn_starts) > 1 else len(candidate)
+                # Drop the LAST turn instead of the first
+                if len(turn_starts) == 1:
+                    # Only one turn left, can't drop more
+                    logger.warning(
+                        "[run] Cannot compact further: only 1 turn remains, %d tokens > %d limit",
+                        len(prompt_ids),
+                        max_prompt_tokens,
+                    )
+                    return candidate
+
+                drop_start = turn_starts[-1]
                 logger.warning(
-                    "[run] Compacting oldest turn: drop messages[%d:%d] to fit %d tokens (current=%d)",
+                    "[run] Compacting NEWEST turn (LIFO): drop messages[%d:] to fit %d tokens (current=%d)",
                     drop_start,
-                    drop_end,
                     max_prompt_tokens,
                     len(prompt_ids),
                 )
-                candidate = prefix + candidate[drop_end:]
-                turn_starts = [
-                    idx - drop_end + len(prefix)
-                    for idx in turn_starts[1:]
-                ]
+                candidate = candidate[:drop_start]
+                turn_starts = turn_starts[:-1]
+
             return candidate
 
         def _trim_trajectory_to_last_turns(
@@ -283,6 +299,29 @@ class OpenClawAgentLoop(AgentLoopBase):
                 return trajectory
             cut_index = assistant_positions[-keep_assistant_turns]
             return trajectory[cut_index:]
+
+        def _max_prompt_tokens() -> int:
+            explicit = os.environ.get("PINCHBENCH_AGENT_MAX_PROMPT_TOKENS", "").strip()
+            if explicit:
+                try:
+                    return max(0, int(explicit))
+                except ValueError:
+                    logger.warning("Invalid PINCHBENCH_AGENT_MAX_PROMPT_TOKENS=%r", explicit)
+            for attr in ("max_prompt_length", "prompt_length"):
+                value = getattr(self.rollout_config, attr, None)
+                if value:
+                    try:
+                        return max(0, int(value))
+                    except (TypeError, ValueError):
+                        pass
+            try:
+                max_model_len = int(os.environ.get("VLLM_MAX_MODEL_LEN", "0") or 0)
+                response_len = int(getattr(self.rollout_config, "response_length", 0) or 0)
+                if max_model_len > response_len:
+                    return max(0, max_model_len - response_len - 512)
+            except (TypeError, ValueError):
+                pass
+            return 0
 
         t_start = time.time()
         openclaw_proc: Optional[asyncio.subprocess.Process] = None
@@ -360,7 +399,7 @@ class OpenClawAgentLoop(AgentLoopBase):
                     retry_count = 0
 
                 chat_messages = self._prepare_messages(req.messages, req.tools)
-                max_prompt_tokens = int(getattr(self.rollout_config, "max_prompt_length", 0) or 0)
+                max_prompt_tokens = _max_prompt_tokens()
                 if max_prompt_tokens > 0:
                     chat_messages = await _compact_messages_by_turn(
                         chat_messages,
@@ -505,6 +544,8 @@ class OpenClawAgentLoop(AgentLoopBase):
         terminal_reward_weight = float(os.environ.get("PINCHBENCH_TERMINAL_REWARD_WEIGHT", "0.3"))
         terminal_reward = terminal_reward_weight * terminal_reward_raw
 
+        task_workspace_path = str(Path(self.oc_config.workspace_base) / task_id) if self.oc_config.workspace_base else ""
+
         trajectory_for_reward = self._transcript_to_messages(transcript_raw) or messages
         if turns:
             trajectory_for_reward = _trim_trajectory_to_last_turns(
@@ -513,6 +554,7 @@ class OpenClawAgentLoop(AgentLoopBase):
             )
         per_turn_rewards = await self._compute_rewards(
             trajectory_for_reward, terminal_success, task_id, task_prompt,
+            workspace_path=task_workspace_path,
         )
         if turns and len(per_turn_rewards) > len(turns):
             per_turn_rewards = per_turn_rewards[-len(turns):]
@@ -815,7 +857,7 @@ class OpenClawAgentLoop(AgentLoopBase):
             "mode": "replace",
             "providers": {"verl": {
                 "baseUrl": proxy_url, "apiKey": "dummy", "api": "openai-completions",
-                "models": [{"id": "verl-proxy", "name": "verl-proxy"}],
+                "models": [{"id": "verl-proxy", "name": "verl-proxy", "reasoning": False}],
             }},
             "defaultProvider": "verl", "defaultModel": "verl/verl-proxy",
         }
@@ -841,7 +883,7 @@ class OpenClawAgentLoop(AgentLoopBase):
             "mode": "replace",
             "providers": {"verl": {
                 "baseUrl": proxy_url, "apiKey": "dummy", "api": "openai-completions",
-                "models": [{"id": "verl-proxy", "name": "verl-proxy"}],
+                "models": [{"id": "verl-proxy", "name": "verl-proxy", "reasoning": False}],
             }},
             "defaultProvider": "verl", "defaultModel": "verl/verl-proxy",
         }, indent=2)
@@ -855,17 +897,27 @@ class OpenClawAgentLoop(AgentLoopBase):
                 }
             },
         }, indent=2)
-        agent_dir = f"$HOME/.openclaw/agents/{agent_id}/agent"
         b64_models = base64.b64encode(models_json.encode()).decode()
         b64_auth = base64.b64encode(auth_json.encode()).decode()
         lock_file = "/tmp/openclaw_agents.lock"
+        # openclaw may normalize agent_id on `agents add` (truncates last char into `id`,
+        # keeps original as `name`). Match by `name` to get the correct agentDir.
+        get_agent_dir_py = (
+            f'python3 -c "'
+            f'import json; '
+            f'd=json.load(open(\\\"$HOME/.openclaw/openclaw.json\\\")); '
+            f'ms=[a for a in d[\\\"agents\\\"][\\\"list\\\"] if a.get(\\\"name\\\")==\\\"{agent_id}\\\" or a.get(\\\"id\\\")==\\\"{agent_id}\\\"]; '
+            f'print(ms[0][\\\"agentDir\\\"]) if ms else print(\\\"$HOME/.openclaw/agents/{agent_id}/agent\\\")'
+            f'"'
+        )
         return " && ".join([
             f"mkdir -p {workspace}",
             f"(flock {lock_file} openclaw agents add {agent_id} --model verl/verl-proxy --workspace {workspace} --non-interactive 2>&1 || echo '[WARN] openclaw agents add failed for {agent_id}' >&2)",
-            f"mkdir -p {agent_dir}",
-            f"echo {b64_models} | base64 -d > {agent_dir}/models.json",
-            f"echo {b64_auth} | base64 -d > {agent_dir}/auth-profiles.json",
-            f"rm -f $HOME/.openclaw/agents/{agent_id}/sessions/sessions.json",
+            f"_adir=$({get_agent_dir_py})",
+            f"mkdir -p $_adir",
+            f"echo {b64_models} | base64 -d > $_adir/models.json",
+            f"echo {b64_auth} | base64 -d > $_adir/auth-profiles.json",
+            f"rm -f $_adir/../sessions/sessions.json",
         ])
 
     def _build_remote_activate_prefix(self) -> str:
@@ -1126,12 +1178,19 @@ class OpenClawAgentLoop(AgentLoopBase):
             pass
         return self.oc_config.prm_vllm_base_url
 
+    def _get_prm_base_url(self) -> str:
+        """Choose judge endpoint without leaking external judges to rollout vLLM."""
+        if self.oc_config.reward_mode == "self-judge":
+            return self._get_vllm_base_url()
+        return self.oc_config.prm_vllm_base_url
+
     async def _compute_rewards(
         self, trajectory: list[dict], terminal_success: bool, task_id: str, task_prompt: str,
+        workspace_path: str = "",
     ) -> list[float]:
         try:
             from .reward import compute_episode_rewards_async
-            vllm_url = self._get_vllm_base_url()
+            vllm_url = self._get_prm_base_url()
             return await compute_episode_rewards_async(
                 trajectory, terminal_success, task_id,
                 task_prompt=task_prompt,
@@ -1139,6 +1198,7 @@ class OpenClawAgentLoop(AgentLoopBase):
                 vllm_base_url=vllm_url,
                 judge_model=self.oc_config.prm_model,
                 judge_api_key=self.oc_config.prm_api_key,
+                workspace_path=workspace_path,
             )
         except Exception as e:
             logger.error("Reward computation failed: %s", e)
@@ -1174,19 +1234,35 @@ class OpenClawAgentLoop(AgentLoopBase):
     def _parse_tool_calls(self, text: str) -> Optional[list[dict]]:
         import re
         tool_calls = []
+        def add_call(name: str, arguments: dict) -> None:
+            tool_calls.append({
+                "id": f"call_{uuid.uuid4().hex[:8]}",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(arguments, ensure_ascii=False),
+                },
+            })
+
         for match in re.finditer(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', text, re.DOTALL):
             try:
                 tc = json.loads(match.group(1))
-                tool_calls.append({
-                    "id": f"call_{uuid.uuid4().hex[:8]}",
-                    "type": "function",
-                    "function": {
-                        "name": tc.get("name", ""),
-                        "arguments": json.dumps(tc.get("arguments", {}), ensure_ascii=False),
-                    },
-                })
+                add_call(tc.get("name", ""), tc.get("arguments", {}))
             except json.JSONDecodeError:
                 pass
+        # Qwen3.5 XML tool-call format used by vLLM qwen3_xml parser:
+        # <tool_call><function=read><parameter=path>file.txt</parameter></function></tool_call>
+        for block in re.finditer(r'<tool_call>\s*(.*?)\s*</tool_call>', text, re.DOTALL):
+            body = block.group(1)
+            if body.lstrip().startswith("{"):
+                continue
+            fn = re.search(r'<function=([A-Za-z_][\w.-]*)>\s*(.*?)\s*</function>', body, re.DOTALL)
+            if not fn:
+                continue
+            args: dict[str, str] = {}
+            for param in re.finditer(r'<parameter=([A-Za-z_][\w.-]*)>\s*(.*?)\s*</parameter>', fn.group(2), re.DOTALL):
+                args[param.group(1)] = param.group(2).strip()
+            add_call(fn.group(1), args)
         return tool_calls if tool_calls else None
 
     def _prepare_messages(self, messages: list[dict], tools: list[dict] | None) -> list[dict]:

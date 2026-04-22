@@ -111,7 +111,13 @@
 #        --enable-lora
 #        --lora-modules pinchbench-lora=/path/to/global_step_N/actor/lora_adapter
 #        --enable-auto-tool-choice
-#        --tool-call-parser hermes
+#        --tool-call-parser <按模型选择>
+#     → parser 必须匹配模型输出格式：
+#        Qwen3/Qwen3-4B: hermes
+#        Qwen3.5 系列: qwen3_xml
+#     → Qwen3.5 误用 hermes 的症状：
+#        raw response 里 tool_calls=[]，vLLM 日志有 hermes_tool_parser JSONDecodeError，
+#        OpenClaw transcript 停在 stopReason=toolUse 且没有 tool result。
 #     → 示例:
 #        python -m vllm.entrypoints.openai.api_server \
 #          --model Qwen/Qwen3-4B \
@@ -122,6 +128,8 @@
 #          --enable-lora --max-loras 4 --max-lora-rank 32 \
 #          --lora-modules pinchbench-lora=/workspace/pinchbench-skill/rl/checkpoints/reinforce_lora/global_step_8/actor/lora_adapter \
 #          --enable-auto-tool-choice --tool-call-parser hermes
+#     → Qwen/Qwen3.5-4B 示例需改为:
+#          --enable-auto-tool-choice --tool-call-parser qwen3_xml
 #
 #  ECS：公网 IP 会变，运行前在 shell 里 export（勿写死在仓库）：
 #    export ECS_HOST=<阿里云控制台显示的公网 IP>

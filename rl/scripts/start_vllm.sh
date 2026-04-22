@@ -30,6 +30,38 @@ if [[ -n "${LORA_ADAPTER_PATH:-}" ]]; then
 fi
 echo "=============================="
 
+# CRITICAL: 清理 GPU 显存（避免 OOM）
+echo ""
+echo "[cleanup] 清理现有 vLLM 进程和 GPU 显存..."
+pkill -9 -f vllm || true
+pkill -9 -f api_server || true
+sleep 2
+
+# 清理所有 GPU 进程，重试几轮，避免残留 EngineCore 卡住显存
+for attempt in 1 2 3 4 5; do
+    GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null || true)
+    if [[ -n "$GPU_PIDS" ]]; then
+        echo "[cleanup] 第 ${attempt} 轮清理 GPU 进程: $GPU_PIDS"
+        for pid in $GPU_PIDS; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+        sleep 3
+    fi
+
+    FREE_MEM=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
+    echo "[cleanup] 第 ${attempt} 轮后 GPU 空闲显存: ${FREE_MEM} MiB"
+    if [[ "$FREE_MEM" -ge 20000 ]]; then
+        break
+    fi
+done
+
+# 验证 GPU 显存
+FREE_MEM=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
+echo "[cleanup] GPU 空闲显存: ${FREE_MEM} MiB"
+if [[ "$FREE_MEM" -lt 10000 ]]; then
+    echo "[cleanup] ⚠️  WARNING: 显存不足 ($FREE_MEM MiB)，可能导致 OOM"
+fi
+
 # 确认 vLLM 已安装
 if ! python -c "import vllm" 2>/dev/null; then
     echo "[setup] 安装 vLLM..."
