@@ -40,7 +40,7 @@ fi
 
 # ── 路径配置 ──
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-DATA_DIR="${DATA_DIR:-${REPO_ROOT}/rl/data/prompts}"
+DATA_DIR="${PINCHBENCH_DATA_DIR_OVERRIDE:-${DATA_DIR:-${REPO_ROOT}/rl/data/prompts}}"
 RUN_VERSION="${RUN_VERSION:-}"
 OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/reinforce_lora${RUN_VERSION:+_${RUN_VERSION}}"
 AGENT_LOOP_CONFIG="${REPO_ROOT}/rl/agent_loop/config.yaml"

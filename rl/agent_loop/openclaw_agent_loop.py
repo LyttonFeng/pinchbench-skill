@@ -1189,7 +1189,23 @@ class OpenClawAgentLoop(AgentLoopBase):
         workspace_path: str = "",
     ) -> list[float]:
         try:
-            from .reward import compute_episode_rewards_async
+            reward_module_override = os.environ.get("PINCHBENCH_REWARD_MODULE_OVERRIDE", "").strip()
+            if reward_module_override:
+                import importlib.util
+                import sys
+
+                module_path = Path(reward_module_override).expanduser().resolve()
+                spec = importlib.util.spec_from_file_location(
+                    "pinchbench_reward_override_module", module_path
+                )
+                if spec is None or spec.loader is None:
+                    raise RuntimeError(f"invalid reward override module: {module_path}")
+                module = importlib.util.module_from_spec(spec)
+                sys.modules["pinchbench_reward_override_module"] = module
+                spec.loader.exec_module(module)
+                compute_episode_rewards_async = module.compute_episode_rewards_async
+            else:
+                from .reward import compute_episode_rewards_async
             vllm_url = self._get_prm_base_url()
             return await compute_episode_rewards_async(
                 trajectory, terminal_success, task_id,

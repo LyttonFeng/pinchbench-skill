@@ -89,6 +89,74 @@ bash rl/train/run_reinforce_lora.sh
 # 或 tee 日志:  bash rl/train/run_reinforce_lora.sh 2>&1 | tee /workspace/train.log
 ```
 
+### 3.0 Task 18 单任务 RL（event-only reward）
+
+单题强扭实验入口：
+
+```bash
+cd /workspace/pinchbench-skill
+bash rl/train/run_reinforce_task18_event_only.sh
+```
+
+它会：
+
+- 只生成 `task_18_spreadsheet_summary` 的 prompt parquet
+- 使用 `Qwen/Qwen3-1.7B`
+- reward override 到：
+  - `rl/agent_loop/task18_event_reward/reward_task18_event_only.py`
+- 默认 terminal weight:
+  - `PINCHBENCH_TERMINAL_REWARD_WEIGHT=0.8`
+
+关键注意：
+
+- 这个 wrapper 不走旧 generic turn-level reward，只保留：
+  - `task_18 event shaping`
+  - `terminal reward`
+- 训练前日志路径固定建议用：
+  - `/workspace/pinchbench-skill/task18_event_only_rl.log`
+
+### 3.0.1 Task 18 启动坑
+
+1. **`run_reinforce_lora.sh` 会再次 source `~/.pinchbench_env`**
+- 所以不能只靠外层 `export DATA_DIR=...`
+- 现已支持：
+
+```bash
+PINCHBENCH_DATA_DIR_OVERRIDE=/workspace/pinchbench-skill/rl/data/prompts_task18_event_only
+```
+
+- `run_reinforce_task18_event_only.sh` 已自动设置这个 override
+
+2. **A100 / 新 Pod 可能根本没装 `verl`**
+- wrapper 里已加 preflight
+- 如果报：
+  - `verl is not installed on this pod`
+- 直接执行：
+
+```bash
+cd /workspace/pinchbench-skill
+ECS_HOST=$OPENCLAW_HOST bash rl/scripts/setup_new_pod.sh
+```
+
+3. **`setup_new_pod.sh` 要求 `ECS_HOST`，不是 `OPENCLAW_HOST`**
+- 这俩值在我们当前拓扑里通常一样
+- wrapper 已自动：
+
+```bash
+ECS_HOST="${ECS_HOST:-${OPENCLAW_HOST}}"
+```
+
+4. **新 Pod 上没设 OpenClaw 连接信息时，会默认退回 `localhost`**
+- wrapper 已给默认值：
+
+```bash
+OPENCLAW_HOST=8.163.82.224
+OPENCLAW_PORT=22
+OPENCLAW_USER=root
+```
+
+若以后 ECS 换机器，要优先改这里或通过 env 覆盖。
+
 依赖：`verl`、`vllm`、`transformers`、`peft` 等（见脚本头注释）。
 
 ### 3.1 qwen-plus / DashScope key
@@ -238,6 +306,10 @@ git rev-parse --short HEAD
 | 文件 | 作用 |
 |------|------|
 | `rl/train/run_reinforce_lora.sh` | 训练入口、checkpoint/val 频率、`PYTHONPATH`、`PINCHBENCH_BEST_CKPT` |
+| `rl/train/run_reinforce_task18_event_only.sh` | `task_18` 单任务 RL 入口，event-only reward |
+| `rl/agent_loop/task18_event_reward/reward_task18_event_only.py` | `task_18` 专用 reward：只保留 event shaping + terminal |
+| `rl/train/reward_manager.py` | scalar reward path；现支持 `PINCHBENCH_REWARD_MODULE_OVERRIDE` |
+| `rl/agent_loop/openclaw_agent_loop.py` | turn reward path；现支持 `PINCHBENCH_REWARD_MODULE_OVERRIDE` |
 | `sitecustomize.py` | 条件加载 best-ckpt patch |
 | `rl/verl_best_ckpt_patch.py` | veRL `_validate` 后按 val 指标删 checkpoint |
 | `rl/verl_debug_metrics_patch.py` | 防止 `calculate_debug_metrics` 在空 tensor 上 `torch.max` 崩训（默认经 `sitecustomize` 启用） |

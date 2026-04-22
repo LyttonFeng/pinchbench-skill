@@ -20,6 +20,7 @@ Online RL 场景下：
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -97,7 +98,20 @@ def compute_score(
         }
 
     try:
-        from reward import compute_episode_rewards
+        reward_override = os.environ.get("PINCHBENCH_REWARD_MODULE_OVERRIDE", "").strip()
+        if reward_override:
+            module_path = Path(reward_override).expanduser().resolve()
+            spec = importlib.util.spec_from_file_location(
+                "pinchbench_reward_override_module_sync", module_path
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError(f"invalid reward override module: {module_path}")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules["pinchbench_reward_override_module_sync"] = module
+            spec.loader.exec_module(module)
+            compute_episode_rewards = module.compute_episode_rewards
+        else:
+            from reward import compute_episode_rewards
 
         vllm_base_url = os.environ.get("PRM_VLLM_BASE_URL", "http://localhost:8000/v1")
         judge_model = os.environ.get("PRM_MODEL", "Qwen3-4B")
