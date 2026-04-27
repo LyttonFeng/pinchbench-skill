@@ -40,6 +40,7 @@ fi
 
 # ── 路径配置 ──
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 DATA_DIR="${PINCHBENCH_DATA_DIR_OVERRIDE:-${DATA_DIR:-${REPO_ROOT}/rl/data/prompts}}"
 RUN_VERSION="${RUN_VERSION:-}"
 OUTPUT_DIR="${REPO_ROOT}/rl/checkpoints/reinforce_lora${RUN_VERSION:+_${RUN_VERSION}}"
@@ -53,8 +54,8 @@ if [ -d /workspace ]; then
   export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HUB_CACHE}}"
 fi
 
-TRAIN_FILE="${DATA_DIR}/train.parquet"
-VAL_FILE="${DATA_DIR}/val.parquet"
+TRAIN_FILE="${PINCHBENCH_TRAIN_FILE_OVERRIDE:-${DATA_DIR}/train.parquet}"
+VAL_FILE="${PINCHBENCH_VAL_FILE_OVERRIDE:-${DATA_DIR}/val.parquet}"
 
 # ── 模型配置 ──
 MODEL="${VERL_MODEL:-Qwen/Qwen3-4B}"
@@ -444,7 +445,19 @@ else
   )
 fi
 
-python3 "${REPO_ROOT}/rl/train/launch_main_ppo.py" \
+if [ "${PINCHBENCH_NO_MASKED_WHITEN:-1}" = "1" ] || [ "${PINCHBENCH_NO_MASKED_WHITEN:-1}" = "true" ]; then
+  python3 "${REPO_ROOT}/rl/scripts/patch_verl_core_algos_no_whiten.py"
+fi
+
+if [ "${PINCHBENCH_RAY_MINIMAL_DASHBOARD_AGENT:-1}" = "1" ] || [ "${PINCHBENCH_RAY_MINIMAL_DASHBOARD_AGENT:-1}" = "true" ]; then
+  python3 "${REPO_ROOT}/rl/scripts/patch_ray_minimal_dashboard_agent.py"
+fi
+
+if [ "${PINCHBENCH_RAY_NODE_START_WAIT_PATCH:-1}" = "1" ] || [ "${PINCHBENCH_RAY_NODE_START_WAIT_PATCH:-1}" = "true" ]; then
+  python3 "${REPO_ROOT}/rl/scripts/patch_ray_node_start_wait.py"
+fi
+
+python3 -m rl.train.launch_main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     algorithm.gamma=0.0 \
     data.train_files="${TRAIN_FILE}" \
@@ -475,8 +488,13 @@ python3 "${REPO_ROOT}/rl/train/launch_main_ppo.py" \
     actor_rollout_ref.actor.fsdp_config.wrap_policy.min_num_params="${FSDP_WRAP_MIN_NUM_PARAMS:-1000000}" \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.n=1 \
-    actor_rollout_ref.rollout.temperature=0.7 \
+    actor_rollout_ref.rollout.temperature="${ROLLOUT_TEMPERATURE:-0.7}" \
     actor_rollout_ref.rollout.top_p=0.9 \
+    actor_rollout_ref.rollout.val_kwargs.do_sample="${VAL_DO_SAMPLE:-False}" \
+    actor_rollout_ref.rollout.val_kwargs.temperature="${VAL_TEMPERATURE:-1.0}" \
+    actor_rollout_ref.rollout.val_kwargs.top_p="${VAL_TOP_P:-1.0}" \
+    actor_rollout_ref.rollout.val_kwargs.top_k="${VAL_TOP_K:--1}" \
+    actor_rollout_ref.rollout.val_kwargs.n="${VAL_N:-1}" \
     actor_rollout_ref.rollout.gpu_memory_utilization="${VLLM_GPU_MEM_UTIL}" \
     actor_rollout_ref.rollout.max_model_len="${VLLM_MAX_MODEL_LEN}" \
     actor_rollout_ref.rollout.max_num_seqs="${VLLM_MAX_NUM_SEQS}" \

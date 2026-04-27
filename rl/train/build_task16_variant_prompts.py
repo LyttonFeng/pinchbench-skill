@@ -140,9 +140,29 @@ TARGETED_PROMPT_GROUPS: dict[str, list[str]] = {
 }
 
 
+TASK16_REWARD_RUBRIC = {
+    "required_report_schema": "incident_groups_v1",
+    "expected_incident_groups": [
+        {
+            "id": "production_database_incident",
+            "emails": ["email_01", "email_13"],
+            "priority": "p0",
+        }
+    ],
+    "expected_priorities": {
+        "email_01": "p0",
+        "email_13": "p0",
+        "email_05": "p1",
+        "email_08": "p1",
+    },
+    "minimum_email_coverage": 10,
+}
+
+
 def _row_with_group(task: dict, repeat_idx: int, group: str) -> dict:
     row = build_verl_row(task, repeat_idx=repeat_idx)
     row["extra_info"]["prompt_group"] = group
+    row["extra_info"]["reward_rubric"] = TASK16_REWARD_RUBRIC
     return row
 
 

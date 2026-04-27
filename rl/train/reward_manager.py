@@ -40,23 +40,31 @@ if _AGENT_LOOP_DIR not in sys.path:
 # PINCHBENCH_TASK_EMA_INIT: initial baseline before first observation. 0.5 is neutral
 #   for {0,+1} rewards; set to 0.0 to be optimistic from the start.
 _task_reward_ema: dict[str, float] = {}
+_task_reward_ema_var: dict[str, float] = {}
 _TASK_EMA_ALPHA = float(os.environ.get("PINCHBENCH_TASK_EMA_ALPHA", "0.1"))
 _TASK_EMA_INIT = float(os.environ.get("PINCHBENCH_TASK_EMA_INIT", "0.5"))
+_TASK_EMA_VAR_INIT = float(os.environ.get("PINCHBENCH_TASK_EMA_VAR_INIT", "0.0"))
 
 
 def _normalize_reward(task_id: str, raw_reward: float) -> float:
-    """Return reward centered on this task's EMA baseline, then update EMA.
+    """Return reward normalized by task EMA mean and EMA variance.
 
-    Advantage = raw_reward - baseline.
+    Advantage = (raw_reward - EMA_mean) / sqrt(EMA_var + 1.0).
+    The +1.0 floor avoids sparse-reward variance explosions.
     - Always-failing task (raw=0, baseline→0): advantage → 0, no gradient.
     - Newly-succeeding task (raw=1, baseline=0): advantage = +1, strong signal.
     - Consistently-succeeding task (raw=1, baseline→1): advantage → 0, converged.
     """
     if task_id not in _task_reward_ema:
         _task_reward_ema[task_id] = _TASK_EMA_INIT
+        _task_reward_ema_var[task_id] = _TASK_EMA_VAR_INIT
     baseline = _task_reward_ema[task_id]
+    variance = _task_reward_ema_var.get(task_id, _TASK_EMA_VAR_INIT)
+    scale = (variance + 1.0) ** 0.5
+    centered = raw_reward - baseline
     _task_reward_ema[task_id] = (1.0 - _TASK_EMA_ALPHA) * baseline + _TASK_EMA_ALPHA * raw_reward
-    return raw_reward - baseline
+    _task_reward_ema_var[task_id] = (1.0 - _TASK_EMA_ALPHA) * variance + _TASK_EMA_ALPHA * (centered ** 2)
+    return centered / scale
 
 
 def compute_score(
@@ -117,14 +125,27 @@ def compute_score(
         judge_model = os.environ.get("PRM_MODEL", "Qwen3-4B")
         judge_api_key = os.environ.get("PRM_API_KEY", "dummy")
 
-        per_turn_rewards = compute_episode_rewards(
-            trajectory, terminal_success, task_id,
-            mode=reward_mode,
-            task_prompt=task_prompt,
-            vllm_base_url=vllm_base_url,
-            judge_model=judge_model,
-            judge_api_key=judge_api_key,
-        )
+        try:
+            per_turn_rewards = compute_episode_rewards(
+                trajectory, terminal_success, task_id,
+                mode=reward_mode,
+                task_prompt=task_prompt,
+                vllm_base_url=vllm_base_url,
+                judge_model=judge_model,
+                judge_api_key=judge_api_key,
+                extra_info=extra_info,
+            )
+        except TypeError as exc:
+            if "extra_info" not in str(exc):
+                raise
+            per_turn_rewards = compute_episode_rewards(
+                trajectory, terminal_success, task_id,
+                mode=reward_mode,
+                task_prompt=task_prompt,
+                vllm_base_url=vllm_base_url,
+                judge_model=judge_model,
+                judge_api_key=judge_api_key,
+            )
 
         # compute_episode_rewards already adds terminal_reward to the last turn,
         # so the episode score is just the sum of per-turn rewards.

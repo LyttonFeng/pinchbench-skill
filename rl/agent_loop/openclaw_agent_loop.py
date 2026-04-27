@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import shlex
 import shutil
 import subprocess
@@ -57,17 +58,18 @@ if not logger.handlers:
 # turn-reward normalization must happen before token assignment, in this process.
 # The two EMA dicts are independent (different Ray workers) but converge similarly.
 _turn_task_ema: dict[str, float] = {}
+_turn_task_ema_var: dict[str, float] = {}
 _TURN_EMA_ALPHA = float(os.environ.get("PINCHBENCH_TASK_EMA_ALPHA", "0.1"))
 _TURN_EMA_INIT = float(os.environ.get("PINCHBENCH_TASK_EMA_INIT", "0.5"))
+_TURN_EMA_VAR_INIT = float(os.environ.get("PINCHBENCH_TASK_EMA_VAR_INIT", "0.0"))
 
 
 def _normalize_turn_rewards(task_id: str, per_turn_rewards: list[float]) -> list[float]:
-    """Center per-turn rewards around this task's EMA baseline.
+    """Normalize per-turn rewards with task-specific EMA mean and variance.
 
     Tracks mean per-turn reward (not sum) so the baseline is independent of
-    episode length. Subtracts baseline from every turn.
-    veRL's mini-batch advantage normalization is disabled (norm_adv_by_std_in_grpo=False)
-    so no std division is needed here.
+    episode length. Uses sqrt(EMA variance + 1.0), not sqrt(var + eps), to avoid
+    sparse-reward scale explosions.
 
     - Always-failing task (raw_mean → 0, baseline → 0): advantage → 0, no gradient.
     - Improving task (raw_mean > baseline): positive advantages, learning signal.
@@ -78,13 +80,18 @@ def _normalize_turn_rewards(task_id: str, per_turn_rewards: list[float]) -> list
     raw_mean = sum(per_turn_rewards) / len(per_turn_rewards)
     if task_id not in _turn_task_ema:
         _turn_task_ema[task_id] = _TURN_EMA_INIT
+        _turn_task_ema_var[task_id] = _TURN_EMA_VAR_INIT
     baseline = _turn_task_ema[task_id]
+    variance = _turn_task_ema_var.get(task_id, _TURN_EMA_VAR_INIT)
+    scale = (variance + 1.0) ** 0.5
+    centered = raw_mean - baseline
     _turn_task_ema[task_id] = (1.0 - _TURN_EMA_ALPHA) * baseline + _TURN_EMA_ALPHA * raw_mean
+    _turn_task_ema_var[task_id] = (1.0 - _TURN_EMA_ALPHA) * variance + _TURN_EMA_ALPHA * (centered ** 2)
 
-    normalized = [r - baseline for r in per_turn_rewards]
+    normalized = [(r - baseline) / scale for r in per_turn_rewards]
     logger.debug(
-        "[EMA] task=%s raw_mean=%.3f baseline=%.3f normalized_sum=%.3f",
-        task_id, raw_mean, baseline, sum(normalized),
+        "[EMA] task=%s raw_mean=%.3f baseline=%.3f var=%.3f scale=%.3f normalized_sum=%.3f",
+        task_id, raw_mean, baseline, variance, scale, sum(normalized),
     )
     return normalized
 
@@ -108,6 +115,52 @@ DEFAULT_WEB_FETCH_SKILLS = (
     "webfetch",
 )
 
+TASK18_TEACHER_HINT = (
+    "When the task includes an .xlsx workbook, do not use the read tool on the .xlsx file. "
+    "Use exec with Python plus pandas/openpyxl first to inspect workbook sheets, columns, and rows. "
+    "Use read only for plain-text files such as .csv, .md, or .txt."
+)
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _task18_teacher_hint_enabled() -> bool:
+    return _env_flag("PINCHBENCH_TASK18_TEACHER_HINT")
+
+
+def _task18_teacher_hint_prob() -> float:
+    raw = os.environ.get("PINCHBENCH_TASK18_TEACHER_HINT_PROB", "0.35").strip()
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except ValueError:
+        logger.warning("Invalid PINCHBENCH_TASK18_TEACHER_HINT_PROB=%r, fallback to 0.35", raw)
+        return 0.35
+
+
+def _maybe_inject_task18_teacher_hint(
+    task_id: str, raw_prompt: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if task_id != "task_18_spreadsheet_summary" or not _task18_teacher_hint_enabled():
+        return raw_prompt
+    if random.random() > _task18_teacher_hint_prob():
+        return raw_prompt
+    injected = [dict(m) for m in raw_prompt]
+    for idx in range(len(injected) - 1, -1, -1):
+        if injected[idx].get("role") != "user":
+            continue
+        content = injected[idx].get("content", "")
+        if TASK18_TEACHER_HINT in content:
+            return injected
+        injected[idx]["content"] = f"{TASK18_TEACHER_HINT}\n\n{content}"
+        logger.warning(
+            "[task18-teacher-hint] injected rollout hint into task_18 user prompt (prob=%.2f)",
+            _task18_teacher_hint_prob(),
+        )
+        return injected
+    return injected
+
 
 def _rsync_bin() -> str:
     """Resolve rsync in Ray workers whose PATH may not include /usr/bin."""
@@ -130,6 +183,107 @@ def _resolve_pinchbench_dir() -> str:
     if (inferred / "tasks").is_dir() and (inferred / "assets").is_dir():
         return str(inferred)
     return ""
+
+
+TASK16_NOISE_PATH_SUFFIXES = (
+    "agents.md",
+    "bootstrap.md",
+    "soul.md",
+    "user.md",
+    "identity.md",
+    "heartbeat.md",
+    "tools.md",
+    "memory.md",
+    "report.md",
+    "inbox.md",
+    "emails.md",
+    "emails.txt",
+    "inbox_emails.txt",
+    "event_map.md",
+    "report_schema.md",
+    "triax_report.md",
+    "tripe_report.md",
+)
+
+
+def _task16_is_inbox_path(path: str) -> bool:
+    p = path.strip().lower()
+    return p.startswith("inbox/email_")
+
+
+def _task16_is_noise_path(path: str) -> bool:
+    p = path.strip().lower()
+    if not p or _task16_is_inbox_path(p):
+        return False
+    if p == "memory" or p.startswith("memory/"):
+        return True
+    return any(p == suffix or p.endswith(f"/{suffix}") for suffix in TASK16_NOISE_PATH_SUFFIXES)
+
+
+def _task16_episode_tags(trajectory: list[dict[str, Any]], workspace_path: str) -> dict[str, Any]:
+    inbox_reads = 0
+    non_task_reads = 0
+    first_read_paths: list[str] = []
+    report_written = False
+    assistant_read_only_turns = 0
+
+    for turn in trajectory:
+        if turn.get("role") != "assistant":
+            continue
+        reads = []
+        for tc in turn.get("tool_calls") or []:
+            fn = tc.get("function") if isinstance(tc, dict) else None
+            name = ""
+            args = ""
+            if isinstance(fn, dict):
+                name = str(fn.get("name", ""))
+                args = fn.get("arguments", "")
+            else:
+                name = str(tc.get("name", ""))
+                args = tc.get("arguments", "")
+            if name == "read":
+                try:
+                    parsed = json.loads(args) if isinstance(args, str) else (args or {})
+                except Exception:
+                    parsed = {}
+                path = str(parsed.get("path", ""))
+                if path:
+                    reads.append(path)
+            if name == "write":
+                try:
+                    parsed = json.loads(args) if isinstance(args, str) else (args or {})
+                except Exception:
+                    parsed = {}
+                path = str(parsed.get("path", "")).lower()
+                if path.endswith("triage_report.md"):
+                    report_written = True
+        if reads and not report_written:
+            assistant_read_only_turns += 1
+        if reads and len(first_read_paths) < 5:
+            first_read_paths.extend(reads[: max(0, 5 - len(first_read_paths))])
+        inbox_reads += sum(1 for path in reads if _task16_is_inbox_path(path))
+        non_task_reads += sum(1 for path in reads if _task16_is_noise_path(path))
+
+    tags = {
+        "non_task_read_count": non_task_reads,
+        "inbox_read_count": inbox_reads,
+        "first_read_paths": first_read_paths,
+        "first_reads_are_task_files": bool(first_read_paths) and all(
+            _task16_is_inbox_path(path) for path in first_read_paths
+        ),
+        "report_written": report_written or (Path(workspace_path) / "triage_report.md").exists(),
+        "read_only_turns": assistant_read_only_turns,
+    }
+    tags["failure_tags"] = [
+        tag
+        for tag, ok in (
+            ("task_grounding_under_workspace_noise", tags["non_task_read_count"] > 0),
+            ("no_report", not tags["report_written"]),
+            ("read_loop", tags["read_only_turns"] >= 3),
+        )
+        if ok
+    ]
+    return tags
 
 
 @dataclass
@@ -210,6 +364,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         raw_prompt = kwargs.get("raw_prompt", [])
         extra_info = kwargs.get("extra_info", {})
         task_id = extra_info.get("task_id", "unknown")
+        raw_prompt = _maybe_inject_task18_teacher_hint(task_id, raw_prompt)
         task_prompt = ""
         if raw_prompt:
             last_user = [m for m in raw_prompt if m.get("role") == "user"]
@@ -220,6 +375,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         logger.info("[run] task_id=%s, host=%s, prompt_len=%d", task_id, self.oc_config.host, len(task_prompt))
 
         session_id = f"rl-{uuid.uuid4().hex[:8]}"
+        workspace_rel = self._episode_workspace_rel(task_id, session_id)
 
         proxy = ModelProxy(host=self.oc_config.proxy_bind_host, port=0)
         proxy_port = await proxy.start()
@@ -323,6 +479,32 @@ class OpenClawAgentLoop(AgentLoopBase):
                 pass
             return 0
 
+        def _effective_generate_budget(
+            prompt_len: int,
+            used_response_len: int,
+            requested_max_tokens: int,
+        ) -> int:
+            """Clamp generation to the remaining response/model-context budget.
+
+            Validation can compact history down to a single turn and still end up
+            with a prompt that nearly fills the model context window. In that case
+            vLLM rejects max_tokens=0. Guard here instead of letting the request
+            reach vLLM with an invalid sampling config.
+            """
+            response_cap = int(getattr(self.rollout_config, "response_length", 0) or 0)
+            response_remaining = max(0, response_cap - used_response_len) if response_cap > 0 else 0
+
+            try:
+                max_model_len = int(os.environ.get("VLLM_MAX_MODEL_LEN", "0") or 0)
+            except (TypeError, ValueError):
+                max_model_len = 0
+            model_remaining = max(0, max_model_len - prompt_len) if max_model_len > 0 else 0
+
+            caps = [cap for cap in (response_remaining, model_remaining, requested_max_tokens) if cap > 0]
+            if not caps:
+                return 0
+            return min(caps)
+
         t_start = time.time()
         openclaw_proc: Optional[asyncio.subprocess.Process] = None
         metrics: dict[str, Any] = {}
@@ -331,12 +513,12 @@ class OpenClawAgentLoop(AgentLoopBase):
             if self.oc_config.host in ("localhost", "127.0.0.1"):
                 logger.info("[run] Starting local OpenClaw for task=%s", task_id)
                 openclaw_proc = await self._start_local_openclaw(
-                    task_prompt, session_id, f"http://127.0.0.1:{proxy_port}/v1", task_id,
+                    task_prompt, session_id, f"http://127.0.0.1:{proxy_port}/v1", task_id, extra_info, workspace_rel,
                 )
             else:
                 logger.info("[run] Starting remote OpenClaw on %s for task=%s", self.oc_config.host, task_id)
                 openclaw_proc = await self._start_remote_openclaw(
-                    task_prompt, session_id, proxy_port, task_id,
+                    task_prompt, session_id, proxy_port, task_id, extra_info, workspace_rel,
                 )
             logger.info("[run] OpenClaw started pid=%s, waiting for first request...", openclaw_proc.pid)
 
@@ -438,11 +620,37 @@ class OpenClawAgentLoop(AgentLoopBase):
                     )
                     break
 
-                logger.info("[run] Calling server_manager.generate (turn=%d, prompt_ids=%d)...", turn_count, len(prompt_token_ids))
+                requested_max_tokens = int(sampling_params.get("max_tokens", response_length) or response_length)
+                effective_max_tokens = _effective_generate_budget(
+                    prompt_len=len(prompt_token_ids),
+                    used_response_len=len(all_response_ids),
+                    requested_max_tokens=requested_max_tokens,
+                )
+                if effective_max_tokens <= 0:
+                    logger.warning(
+                        "[run] Generation budget exhausted before vLLM call "
+                        "(turn=%d, prompt=%d, used_response=%d, response_limit=%d, requested=%d); ending episode.",
+                        turn_count,
+                        len(prompt_token_ids),
+                        len(all_response_ids),
+                        response_length,
+                        requested_max_tokens,
+                    )
+                    break
+
+                gen_sampling_params = dict(sampling_params)
+                gen_sampling_params["max_tokens"] = effective_max_tokens
+
+                logger.info(
+                    "[run] Calling server_manager.generate (turn=%d, prompt_ids=%d, max_tokens=%d)...",
+                    turn_count,
+                    len(prompt_token_ids),
+                    effective_max_tokens,
+                )
                 gen_output = await self.server_manager.generate(
                     request_id=uuid.uuid4().hex,
                     prompt_ids=prompt_token_ids,
-                    sampling_params=sampling_params,
+                    sampling_params=gen_sampling_params,
                 )
                 logger.info("[run] Generate done, got %d tokens", len(gen_output.token_ids) if gen_output.token_ids else 0)
 
@@ -485,7 +693,9 @@ class OpenClawAgentLoop(AgentLoopBase):
                         logger.info("[run]   tc[%d] id=%s name=%s args_len=%d args_preview=%.200s",
                                     i, tc.get("id"), f.get("name"), len(f.get("arguments", "")),
                                     f.get("arguments", ""))
-                logger.info("[run] raw_text_preview=%.300s", response_text[:300] if response_text else "")
+                else:
+                    logger.info("[run]   no_tool_call content_preview=%.160s", content_for_openclaw[:160] if content_for_openclaw else "")
+                logger.debug("[run] raw_text_preview=%.300s", response_text[:300] if response_text else "")
 
                 req.response_text = content_for_openclaw
                 req.response_tool_calls = tool_calls
@@ -539,12 +749,16 @@ class OpenClawAgentLoop(AgentLoopBase):
 
         # Compute reward
         transcript_raw = self._load_openclaw_transcript(session_id, task_id)
-        terminal_success = self._run_grading(task_id, transcript_raw)
+        task_workspace_path = str(Path(self.oc_config.workspace_base) / workspace_rel) if self.oc_config.workspace_base else ""
+        terminal_success = self._run_grading(
+            task_id,
+            transcript_raw,
+            workspace_rel=workspace_rel,
+            extra_info=extra_info,
+        )
         terminal_reward_raw = 1.0 if terminal_success else 0.0  # {0,+1}: no negative gradient for failures
         terminal_reward_weight = float(os.environ.get("PINCHBENCH_TERMINAL_REWARD_WEIGHT", "0.3"))
         terminal_reward = terminal_reward_weight * terminal_reward_raw
-
-        task_workspace_path = str(Path(self.oc_config.workspace_base) / task_id) if self.oc_config.workspace_base else ""
 
         trajectory_for_reward = self._transcript_to_messages(transcript_raw) or messages
         if turns:
@@ -552,9 +766,11 @@ class OpenClawAgentLoop(AgentLoopBase):
                 trajectory_for_reward,
                 keep_assistant_turns=len(turns),
             )
+        episode_tags = _task16_episode_tags(trajectory_for_reward, task_workspace_path) if task_id == "task_16_email_triage" else {}
         per_turn_rewards = await self._compute_rewards(
             trajectory_for_reward, terminal_success, task_id, task_prompt,
             workspace_path=task_workspace_path,
+            extra_info=extra_info,
         )
         if turns and len(per_turn_rewards) > len(turns):
             per_turn_rewards = per_turn_rewards[-len(turns):]
@@ -567,6 +783,44 @@ class OpenClawAgentLoop(AgentLoopBase):
         per_turn_rewards = _normalize_turn_rewards(task_id, per_turn_rewards)
         total_reward = sum(per_turn_rewards)
         process_reward = total_reward - terminal_reward
+
+        if task_id == "task_18_spreadsheet_summary":
+            try:
+                from rl.agent_loop.task18_event_reward.reward_task18_event_only import (
+                    extract_tool_calls as _extract_t18_tool_calls,
+                    task18_event_breakdown as _task18_event_breakdown,
+                )
+
+                assistant_turns = [t for t in trajectory_for_reward if t.get("role") == "assistant"]
+                for idx, turn in enumerate(assistant_turns):
+                    prev_turns = assistant_turns[:idx]
+                    tool_result = None
+                    turn_pos = trajectory_for_reward.index(turn)
+                    for t in trajectory_for_reward[turn_pos + 1 :]:
+                        if t.get("role") == "tool":
+                            tool_result = t.get("content", "")
+                            break
+                        if t.get("role") == "assistant":
+                            break
+                    events = _task18_event_breakdown(turn, trajectory_for_reward[:turn_pos], tool_result)
+                    calls = _extract_t18_tool_calls(turn)
+                    if calls or events:
+                        logger.info(
+                            "[task18-turn] idx=%d tool_calls=%s events=%s turn_reward=%.3f",
+                            idx,
+                            [
+                                {
+                                    "name": c.get("name", ""),
+                                    "args": str(c.get("arguments", ""))[:160],
+                                }
+                                for c in calls
+                            ],
+                            events,
+                            per_turn_rewards[idx] if idx < len(per_turn_rewards) else 0.0,
+                        )
+            except Exception as e:
+                logger.warning("[task18-turn] reward event logging failed: %s", e)
+
         logger.info(
             "Reward: total=%.2f process=%.2f terminal=%.1f per_turn=%s turns=%d mode=%s",
             total_reward,
@@ -576,9 +830,12 @@ class OpenClawAgentLoop(AgentLoopBase):
             turn_count,
             self.oc_config.reward_mode,
         )
+        if episode_tags:
+            logger.info("[task16-episode-tags] %s", episode_tags)
 
-        # Assign per-turn rewards at <|im_end|> token positions
-        # terminal_reward=0 here because it's already in per_turn_rewards
+        # Assign per-turn rewards to model-generated assistant spans. The old
+        # im_end-only mode is still available via PINCHBENCH_REWARD_ASSIGNMENT.
+        # terminal_reward=0 here because it's already in per_turn_rewards.
         reward_at_tokens = self._assign_rewards(
             all_response_ids, all_response_mask, per_turn_rewards, 0.0,
         )
@@ -589,8 +846,9 @@ class OpenClawAgentLoop(AgentLoopBase):
                 if value != 0.0
             ]
             logger.info(
-                "Reward token alignment: task=%s turn_rewards=%s nonzero=%s response_len=%d mask_model_tokens=%d",
+                "Reward token alignment: task=%s assignment=%s turn_rewards=%s nonzero=%s response_len=%d mask_model_tokens=%d",
                 task_id,
+                os.environ.get("PINCHBENCH_REWARD_ASSIGNMENT", "turn_broadcast"),
                 per_turn_rewards,
                 reward_nonzero[:20],
                 len(all_response_ids),
@@ -631,19 +889,34 @@ class OpenClawAgentLoop(AgentLoopBase):
                 "terminal_reward": terminal_reward,
                 "reward_mode": self.oc_config.reward_mode,
                 "trajectory": trajectory_for_reward,
+                "prompt_group": extra_info.get("prompt_group", ""),
+                "reward_rubric": extra_info.get("reward_rubric", {}),
+                "episode_tags": episode_tags,
             },
         )
         return output
 
     # ── OpenClaw process management ──
 
+    @staticmethod
+    def _episode_workspace_rel(task_id: str, session_id: str) -> str:
+        safe_task = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in task_id)
+        safe_session = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in session_id)
+        return f"{safe_task}/{safe_session}"
+
     async def _start_local_openclaw(
-        self, prompt: str, session_id: str, proxy_url: str, task_id: str,
+        self,
+        prompt: str,
+        session_id: str,
+        proxy_url: str,
+        task_id: str,
+        extra_info: Optional[dict[str, Any]] = None,
+        workspace_rel: Optional[str] = None,
     ) -> asyncio.subprocess.Process:
         agent_id = f"rl-{task_id}-{session_id[:8]}"
-        workspace = Path(self.oc_config.workspace_base) / task_id
+        workspace = Path(self.oc_config.workspace_base) / (workspace_rel or self._episode_workspace_rel(task_id, session_id))
         self._setup_agent_local(agent_id, proxy_url, workspace)
-        self._prepare_workspace(task_id, workspace)
+        self._prepare_workspace(task_id, workspace, extra_info=extra_info)
 
         proc = await asyncio.create_subprocess_exec(
             "openclaw", "agent", "--agent", agent_id,
@@ -655,13 +928,19 @@ class OpenClawAgentLoop(AgentLoopBase):
         return proc
 
     async def _start_remote_openclaw(
-        self, prompt: str, session_id: str, proxy_port: int, task_id: str,
+        self,
+        prompt: str,
+        session_id: str,
+        proxy_port: int,
+        task_id: str,
+        extra_info: Optional[dict[str, Any]] = None,
+        workspace_rel: Optional[str] = None,
     ) -> asyncio.subprocess.Process:
         agent_id = f"rl-{task_id}-{session_id[:8]}"
-        workspace = f"{self.oc_config.workspace_base}/{task_id}"
+        workspace = f"{self.oc_config.workspace_base}/{workspace_rel or self._episode_workspace_rel(task_id, session_id)}"
 
         self._preflight_remote_skill_pool(task_id=task_id, task_prompt=prompt)
-        self._prepare_remote_workspace(task_id, workspace)
+        self._prepare_remote_workspace(task_id, workspace, extra_info=extra_info)
 
         # SSH reverse tunnel: ECS localhost:<proxy_port> -> RunPod localhost:<proxy_port>
         # RunPod doesn't expose arbitrary ports to the public internet,
@@ -900,6 +1179,8 @@ class OpenClawAgentLoop(AgentLoopBase):
         b64_models = base64.b64encode(models_json.encode()).decode()
         b64_auth = base64.b64encode(auth_json.encode()).decode()
         lock_file = "/tmp/openclaw_agents.lock"
+        proxy_models_url = f"{proxy_url}/models"
+        proxy_models_url_q = shlex.quote(proxy_models_url)
         # openclaw may normalize agent_id on `agents add` (truncates last char into `id`,
         # keeps original as `name`). Match by `name` to get the correct agentDir.
         get_agent_dir_py = (
@@ -910,6 +1191,16 @@ class OpenClawAgentLoop(AgentLoopBase):
             f'print(ms[0][\\\"agentDir\\\"]) if ms else print(\\\"$HOME/.openclaw/agents/{agent_id}/agent\\\")'
             f'"'
         )
+        proxy_smoke_test_py = shlex.quote(
+            (
+                "import json, sys, urllib.request; "
+                f"url={proxy_models_url!r}; "
+                "data=json.load(urllib.request.urlopen(url, timeout=15)); "
+                "ids=[item.get('id') for item in data.get('data', []) if isinstance(item, dict)]; "
+                "print('[OC-SETUP] proxy_models=', ids); "
+                "sys.exit(0 if 'verl-proxy' in ids else 2)"
+            )
+        )
         return " && ".join([
             f"mkdir -p {workspace}",
             f"(flock {lock_file} openclaw agents add {agent_id} --model verl/verl-proxy --workspace {workspace} --non-interactive 2>&1 || echo '[WARN] openclaw agents add failed for {agent_id}' >&2)",
@@ -918,6 +1209,11 @@ class OpenClawAgentLoop(AgentLoopBase):
             f"echo {b64_models} | base64 -d > $_adir/models.json",
             f"echo {b64_auth} | base64 -d > $_adir/auth-profiles.json",
             f"rm -f $_adir/../sessions/sessions.json",
+            f"echo '[OC-SETUP] agent_dir='$_adir",
+            "echo '[OC-SETUP] models.json:' && cat $_adir/models.json",
+            "echo '[OC-SETUP] auth-profiles.json:' && cat $_adir/auth-profiles.json",
+            f"echo '[OC-SETUP] proxy_models_url={proxy_models_url}'",
+            f"python3 -c {proxy_smoke_test_py} || (echo '[OC-SETUP] proxy smoke test failed for {proxy_models_url_q}' >&2; exit 97)",
         ])
 
     def _build_remote_activate_prefix(self) -> str:
@@ -934,10 +1230,94 @@ class OpenClawAgentLoop(AgentLoopBase):
             return f'export PATH="{remote_bin_dir}:$PATH"'
         return ""
 
-    def _prepare_workspace(self, task_id: str, workspace: Path) -> None:
+    @staticmethod
+    def _workspace_scrub_paths() -> list[str]:
+        # OpenClaw can materialize generic bootstrap / memory scaffold files in the
+        # workspace root. They are not part of benchmark task fixtures and can pull
+        # the agent off-task (e.g. reading MEMORY.md / BOOTSTRAP.md instead of inbox/).
+        return [
+            "BOOTSTRAP.md",
+            "SOUL.md",
+            "USER.md",
+            "IDENTITY.md",
+            "HEARTBEAT.md",
+            "TOOLS.md",
+            "MEMORY.md",
+            "REPORT.md",
+            "INBOX.md",
+            "emails.md",
+            "emails.txt",
+            "inbox_emails.txt",
+            "event_map.md",
+            "report_schema.md",
+            "triax_report.md",
+            "tripe_report.md",
+            "memory",
+        ]
+
+    def _scrub_workspace(self, workspace: Path) -> None:
+        try:
+            for rel in self._workspace_scrub_paths():
+                target = workspace / rel
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                elif target.exists():
+                    target.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning("Local workspace scrub failed for %s: %s", workspace, e)
+
+    def _workspace_files_from_extra_info(self, extra_info: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not isinstance(extra_info, dict):
+            return []
+        files = extra_info.get("workspace_files")
+        if isinstance(files, (list, tuple)) or (hasattr(files, "tolist") and not isinstance(files, dict)):
+            if hasattr(files, "tolist"):
+                files = files.tolist()
+            return [f for f in files if isinstance(f, dict)]
+        if isinstance(files, dict):
+            normalized: list[dict[str, Any]] = []
+            for path, content in files.items():
+                if isinstance(path, str):
+                    normalized.append({"path": path, "content": "" if content is None else str(content)})
+            return normalized
+        return []
+
+    def _write_workspace_files(self, workspace: Path, files: list[dict[str, Any]]) -> None:
+        for f in files:
+            if "content" in f:
+                dest = workspace / str(f["path"])
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(str(f["content"]))
+            elif "source" in f:
+                src = Path(self.oc_config.pinchbench_dir) / "assets" / str(f["source"])
+                dest = workspace / str(f.get("dest", f["source"]))
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(src.read_bytes())
+
+    def _prepare_workspace(
+        self,
+        task_id: str,
+        workspace: Path,
+        extra_info: Optional[dict[str, Any]] = None,
+    ) -> None:
         if not self.oc_config.pinchbench_dir:
             return
         try:
+            dynamic_files = self._workspace_files_from_extra_info(extra_info)
+            if dynamic_files:
+                if workspace.exists():
+                    shutil.rmtree(workspace)
+                workspace.mkdir(parents=True, exist_ok=True)
+                self._write_workspace_files(workspace, dynamic_files)
+                self._scrub_workspace(workspace)
+                logger.info(
+                    "Seeded dynamic workspace_files for %s -> %s (%d files)",
+                    task_id,
+                    workspace,
+                    len(dynamic_files),
+                )
+                return
+
             import sys
             scripts_dir = Path(self.oc_config.pinchbench_dir) / "scripts"
             if str(scripts_dir) not in sys.path:
@@ -959,20 +1339,17 @@ class OpenClawAgentLoop(AgentLoopBase):
             if workspace.exists():
                 shutil.rmtree(workspace)
             workspace.mkdir(parents=True, exist_ok=True)
-            for f in getattr(task, "workspace_files", []):
-                if "content" in f:
-                    dest = workspace / f["path"]
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_text(f["content"])
-                elif "source" in f:
-                    src = Path(self.oc_config.pinchbench_dir) / "assets" / f["source"]
-                    dest = workspace / f.get("dest", f["source"])
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(src.read_bytes())
+            self._write_workspace_files(workspace, list(getattr(task, "workspace_files", [])))
+            self._scrub_workspace(workspace)
         except Exception as e:
             logger.error("Workspace prep failed: %s", e)
 
-    def _prepare_remote_workspace(self, task_id: str, workspace: str) -> None:
+    def _prepare_remote_workspace(
+        self,
+        task_id: str,
+        workspace: str,
+        extra_info: Optional[dict[str, Any]] = None,
+    ) -> None:
         """Write task `workspace_files` onto ECS before OpenClaw runs.
 
         Local mode calls `_prepare_workspace` on the training host; remote mode
@@ -987,7 +1364,7 @@ class OpenClawAgentLoop(AgentLoopBase):
         try:
             with tempfile.TemporaryDirectory(prefix="pinchbench_seed_") as td:
                 local_root = Path(td) / task_id
-                self._prepare_workspace(task_id, local_root)
+                self._prepare_workspace(task_id, local_root, extra_info=extra_info)
                 if not local_root.is_dir():
                     return
                 has_files = any(p.is_file() for p in local_root.rglob("*"))
@@ -1013,6 +1390,24 @@ class OpenClawAgentLoop(AgentLoopBase):
                     )
                     return
                 if not has_files:
+                    scrub_cmd = " && ".join(
+                        [f"rm -rf {shlex.quote(workspace)}/{shlex.quote(rel)}" for rel in self._workspace_scrub_paths()]
+                    )
+                    subprocess.run(
+                        [
+                            "ssh",
+                            "-o", "StrictHostKeyChecking=no",
+                            "-o", "ConnectTimeout=10",
+                            "-i", self.oc_config.ssh_key,
+                            "-p", str(self.oc_config.ssh_port),
+                            f"{self.oc_config.user}@{self.oc_config.host}",
+                            scrub_cmd,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=False,
+                    )
                     logger.info(
                         "Remote workspace reset (empty seed / no workspace_files) for %s -> %s",
                         task_id,
@@ -1038,6 +1433,29 @@ class OpenClawAgentLoop(AgentLoopBase):
                         task_id, sync.stderr, sync.stdout,
                     )
                 else:
+                    scrub_cmd = " && ".join(
+                        [f"rm -rf {shlex.quote(workspace)}/{shlex.quote(rel)}" for rel in self._workspace_scrub_paths()]
+                    )
+                    scrub = subprocess.run(
+                        [
+                            "ssh",
+                            "-o", "StrictHostKeyChecking=no",
+                            "-o", "ConnectTimeout=10",
+                            "-i", self.oc_config.ssh_key,
+                            "-p", str(self.oc_config.ssh_port),
+                            f"{self.oc_config.user}@{self.oc_config.host}",
+                            scrub_cmd,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=False,
+                    )
+                    if scrub.returncode != 0:
+                        logger.warning(
+                            "Remote workspace scrub failed for %s: %s %s",
+                            task_id, scrub.stderr, scrub.stdout,
+                        )
                     logger.info("Seeded remote workspace for %s -> %s", task_id, workspace)
         except Exception as e:
             logger.error("Remote workspace prep failed for %s: %s", task_id, e)
@@ -1082,7 +1500,13 @@ class OpenClawAgentLoop(AgentLoopBase):
                 })
         return msgs
 
-    def _run_grading(self, task_id: str, transcript: list[dict]) -> bool:
+    def _run_grading(
+        self,
+        task_id: str,
+        transcript: list[dict],
+        workspace_rel: Optional[str] = None,
+        extra_info: Optional[dict[str, Any]] = None,
+    ) -> bool:
         if not self.oc_config.pinchbench_dir:
             return False
         try:
@@ -1101,20 +1525,23 @@ class OpenClawAgentLoop(AgentLoopBase):
             if task is None:
                 return False
 
-            workspace = Path(self.oc_config.workspace_base) / task_id
+            workspace_rel = workspace_rel or task_id
+            workspace = Path(self.oc_config.workspace_base) / workspace_rel
             workspace.mkdir(parents=True, exist_ok=True)
 
             # Sync workspace files from ECS (files are created there by OpenClaw)
             if self.oc_config.host not in ("localhost", "127.0.0.1"):
                 ssh_key = self.oc_config.ssh_key or "/root/.ssh/id_ed25519"
-                remote_ws = f"{self.oc_config.workspace_base}/{task_id}/"
+                remote_ws = f"{self.oc_config.workspace_base}/{workspace_rel}/"
+                rsync_io_timeout = os.environ.get("PINCHBENCH_WORKSPACE_RSYNC_IO_TIMEOUT", "60")
+                rsync_proc_timeout = float(os.environ.get("PINCHBENCH_WORKSPACE_RSYNC_PROC_TIMEOUT", "120"))
                 try:
                     sync = subprocess.run(
-                        [_rsync_bin(), "-az", "--timeout=10",
+                        [_rsync_bin(), "-az", f"--timeout={rsync_io_timeout}",
                          "-e", f"ssh -o StrictHostKeyChecking=no -i {ssh_key}",
                          f"{self.oc_config.user}@{self.oc_config.host}:{remote_ws}",
                          str(workspace) + "/"],
-                        capture_output=True, text=True, timeout=30,
+                        capture_output=True, text=True, timeout=rsync_proc_timeout,
                     )
                     if sync.returncode != 0:
                         logger.warning(
@@ -1134,6 +1561,37 @@ class OpenClawAgentLoop(AgentLoopBase):
                 "workspace": str(workspace),
                 "status": "completed",
             }
+
+            reward_rubric = extra_info.get("reward_rubric") if isinstance(extra_info, dict) else None
+            if (
+                task_id == "task_16_email_triage"
+                and isinstance(reward_rubric, dict)
+                and os.environ.get("PINCHBENCH_PER_INSTANCE_VERIFIER", "").strip().lower()
+                in {"1", "true", "yes", "on"}
+            ):
+                from rl.agent_loop.per_instance_verifier import verify_task16_per_instance
+
+                threshold = float(os.environ.get("PINCHBENCH_PER_INSTANCE_VERIFIER_THRESHOLD", "0.72"))
+                result = verify_task16_per_instance(
+                    workspace_path=workspace,
+                    reward_rubric=reward_rubric,
+                    threshold=threshold,
+                    min_coverage=float(os.environ.get("PINCHBENCH_PER_INSTANCE_MIN_COVERAGE", "0.90")),
+                    min_priority=float(os.environ.get("PINCHBENCH_PER_INSTANCE_MIN_PRIORITY", "0.80")),
+                    min_category=float(os.environ.get("PINCHBENCH_PER_INSTANCE_MIN_CATEGORY", "0.75")),
+                    min_required_fields=float(os.environ.get("PINCHBENCH_PER_INSTANCE_MIN_REQUIRED_FIELDS", "0.75")),
+                )
+                logger.info(
+                    "Per-instance grading %s: score=%.3f passed=%s threshold=%.3f breakdown=%s notes=%s",
+                    task_id,
+                    result.score,
+                    result.passed,
+                    threshold,
+                    result.breakdown,
+                    result.notes,
+                )
+                return result.passed
+
             skill_dir = Path(self.oc_config.pinchbench_dir)
             from lib_grading import resolve_judge_backend_from_env, preflight_judge_connection
             judge_cfg = resolve_judge_backend_from_env(
@@ -1187,6 +1645,7 @@ class OpenClawAgentLoop(AgentLoopBase):
     async def _compute_rewards(
         self, trajectory: list[dict], terminal_success: bool, task_id: str, task_prompt: str,
         workspace_path: str = "",
+        extra_info: Optional[dict[str, Any]] = None,
     ) -> list[float]:
         try:
             reward_module_override = os.environ.get("PINCHBENCH_REWARD_MODULE_OVERRIDE", "").strip()
@@ -1207,15 +1666,29 @@ class OpenClawAgentLoop(AgentLoopBase):
             else:
                 from .reward import compute_episode_rewards_async
             vllm_url = self._get_prm_base_url()
-            return await compute_episode_rewards_async(
-                trajectory, terminal_success, task_id,
-                task_prompt=task_prompt,
-                mode=self.oc_config.reward_mode,
-                vllm_base_url=vllm_url,
-                judge_model=self.oc_config.prm_model,
-                judge_api_key=self.oc_config.prm_api_key,
-                workspace_path=workspace_path,
-            )
+            try:
+                return await compute_episode_rewards_async(
+                    trajectory, terminal_success, task_id,
+                    task_prompt=task_prompt,
+                    mode=self.oc_config.reward_mode,
+                    vllm_base_url=vllm_url,
+                    judge_model=self.oc_config.prm_model,
+                    judge_api_key=self.oc_config.prm_api_key,
+                    workspace_path=workspace_path,
+                    extra_info=extra_info or {},
+                )
+            except TypeError as exc:
+                if "extra_info" not in str(exc):
+                    raise
+                return await compute_episode_rewards_async(
+                    trajectory, terminal_success, task_id,
+                    task_prompt=task_prompt,
+                    mode=self.oc_config.reward_mode,
+                    vllm_base_url=vllm_url,
+                    judge_model=self.oc_config.prm_model,
+                    judge_api_key=self.oc_config.prm_api_key,
+                    workspace_path=workspace_path,
+                )
         except Exception as e:
             logger.error("Reward computation failed: %s", e)
             return []
@@ -1226,6 +1699,13 @@ class OpenClawAgentLoop(AgentLoopBase):
     ) -> list[float]:
         rewards = [0.0] * len(response_ids)
         if not response_ids:
+            return rewards
+
+        assignment = os.environ.get("PINCHBENCH_REWARD_ASSIGNMENT", "turn_broadcast").strip().lower()
+        if assignment in {"turn_broadcast", "broadcast", "span"}:
+            self._assign_rewards_to_turn_spans(rewards, response_mask, per_turn_rewards)
+            if terminal_reward:
+                self._assign_scalar_to_model_tokens(rewards, response_mask, terminal_reward)
             return rewards
 
         im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
@@ -1244,6 +1724,68 @@ class OpenClawAgentLoop(AgentLoopBase):
 
         rewards[-1] += terminal_reward
         return rewards
+
+    @staticmethod
+    def _model_token_spans(response_mask: list[int]) -> list[tuple[int, int]]:
+        spans: list[tuple[int, int]] = []
+        start: int | None = None
+        for idx, mask in enumerate(response_mask):
+            if mask == 1 and start is None:
+                start = idx
+            elif mask != 1 and start is not None:
+                spans.append((start, idx))
+                start = None
+        if start is not None:
+            spans.append((start, len(response_mask)))
+        return spans
+
+    def _assign_rewards_to_turn_spans(
+        self,
+        rewards: list[float],
+        response_mask: list[int],
+        per_turn_rewards: list[float],
+    ) -> None:
+        spans = [
+            (max(0, start), min(len(rewards), end))
+            for start, end in self._model_token_spans(response_mask[: len(rewards)])
+            if start < len(rewards) and end > start
+        ]
+        if not spans:
+            if rewards and per_turn_rewards:
+                rewards[-1] += float(sum(per_turn_rewards))
+            return
+
+        n = min(len(per_turn_rewards), len(spans))
+        for idx in range(n):
+            value = float(per_turn_rewards[idx])
+            start, end = spans[idx]
+            length = max(1, end - start)
+            per_token = value / length
+            for pos in range(start, end):
+                rewards[pos] += per_token
+
+        if n < len(per_turn_rewards):
+            leftover = float(sum(per_turn_rewards[n:]))
+            start, end = spans[-1]
+            length = max(1, end - start)
+            per_token = leftover / length
+            for pos in range(start, end):
+                rewards[pos] += per_token
+
+    def _assign_scalar_to_model_tokens(
+        self,
+        rewards: list[float],
+        response_mask: list[int],
+        scalar_reward: float,
+    ) -> None:
+        positions = [idx for idx, mask in enumerate(response_mask) if mask == 1]
+        if not positions:
+            if rewards:
+                rewards[-1] += scalar_reward
+            return
+        per_token = scalar_reward / len(positions)
+        for pos in positions:
+            rewards[pos] += per_token
 
     # ── Utilities ──
 
