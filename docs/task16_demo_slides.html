@@ -1,0 +1,1019 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task16 Demo Slides</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --paper: #fbf8f2;
+      --ink: #191612;
+      --muted: #6e665d;
+      --line: #d5cabd;
+      --panel: #fffdf8;
+      --navy: #17324d;
+      --blue: #3b82f6;
+      --teal: #0f766e;
+      --green: #15803d;
+      --orange: #c2410c;
+      --red: #b91c1c;
+      --gold: #b7791f;
+      --shadow: 0 20px 60px rgba(34, 28, 20, 0.12);
+      --radius: 24px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "SF Pro Display", "PingFang SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(23, 50, 77, 0.08), transparent 25%),
+        radial-gradient(circle at bottom right, rgba(21, 128, 61, 0.08), transparent 28%),
+        linear-gradient(180deg, #f7f2ea 0%, #f1ebe2 100%);
+    }
+
+    .deck {
+      width: min(1400px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 32px 0 60px;
+    }
+
+    .slide {
+      min-height: 780px;
+      margin: 0 0 28px;
+      background: linear-gradient(180deg, rgba(255, 253, 248, 0.96), rgba(251, 248, 242, 0.96));
+      border: 1px solid var(--line);
+      border-radius: 30px;
+      box-shadow: var(--shadow);
+      padding: 40px 46px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(135deg, rgba(23, 50, 77, 0.04), transparent 28%),
+        linear-gradient(315deg, rgba(183, 121, 31, 0.05), transparent 24%);
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(23, 50, 77, 0.18);
+      background: rgba(23, 50, 77, 0.06);
+      color: var(--navy);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    .title {
+      margin-top: 18px;
+      font-size: 54px;
+      line-height: 1.04;
+      letter-spacing: -0.03em;
+      max-width: 980px;
+    }
+
+    .subtitle {
+      margin-top: 14px;
+      font-size: 22px;
+      color: var(--muted);
+      max-width: 900px;
+      line-height: 1.45;
+    }
+
+    .grid-hero {
+      display: grid;
+      grid-template-columns: 1.25fr 0.9fr;
+      gap: 26px;
+      margin-top: 36px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(213, 202, 189, 0.9);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+
+    .panel h3 {
+      font-size: 18px;
+      margin-bottom: 14px;
+      color: var(--navy);
+    }
+
+    .big-quote {
+      font-size: 34px;
+      line-height: 1.25;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .chip {
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(23, 50, 77, 0.14);
+      background: rgba(23, 50, 77, 0.05);
+      color: var(--navy);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .bullet-list {
+      margin-top: 12px;
+      padding-left: 22px;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.65;
+    }
+
+    .bullet-list li { margin: 8px 0; }
+
+    .slide-number {
+      position: absolute;
+      right: 36px;
+      bottom: 26px;
+      color: rgba(25, 22, 18, 0.35);
+      font-size: 16px;
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    .score-layout {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 26px;
+      margin-top: 34px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .chart-card {
+      padding: 28px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.74);
+    }
+
+    .score-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: end;
+      min-height: 430px;
+      margin-top: 18px;
+    }
+
+    .score-group {
+      border-radius: 22px;
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(244, 239, 231, 0.74));
+      border: 1px solid rgba(213, 202, 189, 0.9);
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    .score-group h3 {
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+
+    .bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 14px;
+      height: 260px;
+      margin-top: 10px;
+    }
+
+    .bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .bar-value {
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .bar-shell {
+      width: 100%;
+      max-width: 88px;
+      height: 220px;
+      border-radius: 18px 18px 8px 8px;
+      background: linear-gradient(180deg, rgba(23, 50, 77, 0.08), rgba(23, 50, 77, 0.03));
+      border: 1px solid rgba(23, 50, 77, 0.08);
+      display: flex;
+      align-items: flex-end;
+      padding: 6px;
+    }
+
+    .bar-fill {
+      width: 100%;
+      border-radius: 12px;
+    }
+
+    .bar-fill.base {
+      background: linear-gradient(180deg, #9ca3af, #6b7280);
+    }
+
+    .bar-fill.rl {
+      background: linear-gradient(180deg, #34d399, #2563eb);
+    }
+
+    .bar-label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .mean-row {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px dashed rgba(23, 50, 77, 0.2);
+      display: flex;
+      justify-content: space-between;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .delta-card {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .delta-box {
+      padding: 28px;
+      border-radius: 24px;
+      color: white;
+      background: linear-gradient(135deg, #17324d, #0f766e);
+    }
+
+    .delta-box .label {
+      font-size: 14px;
+      opacity: 0.85;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .delta-box .num {
+      font-size: 72px;
+      line-height: 1;
+      margin-top: 8px;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+    }
+
+    .delta-box .meta {
+      margin-top: 10px;
+      font-size: 18px;
+      line-height: 1.45;
+      opacity: 0.92;
+    }
+
+    .note-box {
+      padding: 20px 22px;
+      border-radius: 20px;
+      background: rgba(255,255,255,0.76);
+      border: 1px solid rgba(213, 202, 189, 0.9);
+    }
+
+    .note-box ul {
+      margin: 10px 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .compare-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 26px;
+      margin-top: 34px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .compare-card {
+      border-radius: 26px;
+      padding: 26px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.76);
+    }
+
+    .compare-card.bad {
+      box-shadow: inset 0 0 0 2px rgba(185, 28, 28, 0.08);
+    }
+
+    .compare-card.good {
+      box-shadow: inset 0 0 0 2px rgba(21, 128, 61, 0.08);
+    }
+
+    .compare-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .compare-head h3 {
+      font-size: 24px;
+    }
+
+    .score-tag {
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .score-tag.bad {
+      color: #7f1d1d;
+      background: rgba(248, 113, 113, 0.15);
+      border: 1px solid rgba(185, 28, 28, 0.18);
+    }
+
+    .score-tag.good {
+      color: #14532d;
+      background: rgba(74, 222, 128, 0.16);
+      border: 1px solid rgba(21, 128, 61, 0.18);
+    }
+
+    .excerpt {
+      margin-top: 14px;
+      border-radius: 20px;
+      background: #fffdfa;
+      border: 1px solid rgba(213, 202, 189, 0.9);
+      padding: 18px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.62;
+      white-space: pre-line;
+    }
+
+    .flags {
+      margin-top: 18px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .flag {
+      padding: 12px 14px;
+      border-radius: 15px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .flag.bad {
+      background: rgba(248, 113, 113, 0.12);
+      color: #991b1b;
+      border: 1px solid rgba(185, 28, 28, 0.16);
+    }
+
+    .flag.good {
+      background: rgba(74, 222, 128, 0.14);
+      color: #166534;
+      border: 1px solid rgba(21, 128, 61, 0.16);
+    }
+
+    .report-compare {
+      margin-top: 22px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .report-box {
+      border-radius: 20px;
+      border: 1px solid rgba(213, 202, 189, 0.9);
+      background: #fffdfa;
+      overflow: hidden;
+    }
+
+    .report-box .rh {
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(213, 202, 189, 0.9);
+    }
+
+    .report-box.bad .rh {
+      color: #991b1b;
+      background: rgba(248, 113, 113, 0.08);
+    }
+
+    .report-box.good .rh {
+      color: #166534;
+      background: rgba(74, 222, 128, 0.09);
+    }
+
+    .report-box pre {
+      margin: 0;
+      padding: 16px;
+      min-height: 260px;
+      white-space: pre-wrap;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.58;
+      color: #3b342d;
+    }
+
+    .mapping-grid {
+      margin-top: 30px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 22px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .mapping-card {
+      border-radius: 24px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.78);
+    }
+
+    .mapping-card h3 {
+      font-size: 22px;
+      margin-bottom: 14px;
+      color: var(--navy);
+    }
+
+    .mapping-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .mapping-item {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(23, 50, 77, 0.12);
+      background: rgba(23, 50, 77, 0.04);
+    }
+
+    .mapping-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 15px;
+      color: var(--ink);
+    }
+
+    .mapping-item span {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .graph-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 26px;
+      margin-top: 34px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .graph-card {
+      border-radius: 26px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.76);
+    }
+
+    .graph-card h3 {
+      font-size: 23px;
+      margin-bottom: 8px;
+    }
+
+    .graph-card p {
+      color: var(--muted);
+      font-size: 15px;
+      margin-bottom: 16px;
+    }
+
+    svg {
+      width: 100%;
+      height: 420px;
+      display: block;
+      border-radius: 20px;
+      background: linear-gradient(180deg, #fcfaf5, #f6efe5);
+      border: 1px solid rgba(213, 202, 189, 0.9);
+    }
+
+    .caption {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .footer-line {
+      margin-top: 28px;
+      padding-top: 20px;
+      border-top: 1px dashed rgba(23, 50, 77, 0.2);
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--navy);
+      position: relative;
+      z-index: 1;
+    }
+
+    @media (max-width: 1100px) {
+      .grid-hero,
+      .score-layout,
+      .compare-layout,
+      .graph-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .title {
+        font-size: 42px;
+      }
+
+      .slide {
+        min-height: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide">
+      <span class="eyebrow">Slide 1 · Task</span>
+      <h1 class="title">这个任务到底在测什么？</h1>
+      <p class="subtitle">
+        不是“读邮件分类”，而是做一轮值班 inbox triage：读完 13 封杂乱邮件，识别核心事件，给出优先级，并写成一份可执行报告。
+      </p>
+
+      <div class="grid-hero">
+        <div class="panel">
+          <h3>任务要求</h3>
+          <div class="big-quote">
+            读完整个 inbox，
+            <span style="color: var(--teal);">写出 triage_report.md</span>
+          </div>
+          <ul class="bullet-list">
+            <li>覆盖全部 13 封邮件，不漏项</li>
+            <li>为每封邮件给出 <strong>priority / category / action</strong></li>
+            <li>把结果组织成一份可扫描、可执行的值班报告</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>为什么难</h3>
+          <div class="chips">
+            <div class="chip">Incident Linkage</div>
+            <div class="chip">Priority Propagation</div>
+            <div class="chip">Coverage</div>
+            <div class="chip">Closure</div>
+          </div>
+          <ul class="bullet-list" style="font-size: 17px;">
+            <li><strong>不是单封分类</strong>：要看整个 inbox 的事件结构</li>
+            <li>要把 `email_01` outage 和 `email_13` alert 连起来</li>
+            <li>要稳定识别 BigClient / security 这类高权重邮件</li>
+            <li>最后还要收敛成一份真正可用的报告</li>
+          </ul>
+        </div>
+      </div>
+      <div class="slide-number">01</div>
+    </section>
+
+    <section class="slide">
+      <span class="eyebrow">Slide 2 · Grading</span>
+      <h2 class="title" style="font-size: 48px;">这个任务怎么评分？</h2>
+      <p class="subtitle">
+        Task16 用 hybrid grading。分数不是主观 impression，而是“结构完成度 + 关键判断 + 整体质量”的组合。
+      </p>
+
+      <div class="compare-layout">
+        <div class="compare-card">
+          <div class="compare-head">
+            <h3>Automated · 40%</h3>
+            <span class="score-tag good">规则检查</span>
+          </div>
+          <div class="flags">
+            <div class="flag good">是否写出 <strong>triage_report.md</strong></div>
+            <div class="flag good">是否覆盖全部邮件</div>
+            <div class="flag good">是否写了 priority / category / action</div>
+            <div class="flag good">`email_01` 是否 P0</div>
+            <div class="flag good">`email_13` 是否和 outage 建立 linkage</div>
+            <div class="flag good">BigClient 是否高优，spam 是否低优</div>
+            <div class="flag good">是否按 priority 排序，是否有 summary</div>
+          </div>
+        </div>
+
+        <div class="compare-card">
+          <div class="compare-head">
+            <h3>LLM Judge · 60%</h3>
+            <span class="score-tag good">整体质量</span>
+          </div>
+          <div class="flags">
+            <div class="flag good">Priority Assignment Accuracy</div>
+            <div class="flag good">Categorization Quality</div>
+            <div class="flag good">Action Recommendations</div>
+            <div class="flag good">Contextual Awareness and Connections</div>
+            <div class="flag good">Report Structure and Usability</div>
+          </div>
+          <div class="excerpt">Final score = 0.4 × automated_score + 0.6 × llm_judge_score
+
+Judge model: qwen-plus
+Inference budget for this comparison: max_tokens = 4096</div>
+        </div>
+      </div>
+      <div class="slide-number">02</div>
+    </section>
+
+    <section class="slide">
+      <span class="eyebrow">Slide 3 · Score</span>
+      <h2 class="title" style="font-size: 48px;">Task16: 37.5% → 65.7%</h2>
+      <p class="subtitle">
+        在统一 inference budget 下，step30 LoRA 相对 baseline 提升 <strong>+28.2pt</strong>。
+      </p>
+
+      <div class="score-layout">
+        <div class="chart-card">
+          <div class="score-columns">
+            <div class="score-group">
+              <h3>Baseline @4096</h3>
+              <div class="bars">
+                <div class="bar-col">
+                  <div class="bar-value">36.0</div>
+                  <div class="bar-shell"><div class="bar-fill base" style="height: 36%;"></div></div>
+                  <div class="bar-label">Run 1</div>
+                </div>
+                <div class="bar-col">
+                  <div class="bar-value">36.0</div>
+                  <div class="bar-shell"><div class="bar-fill base" style="height: 36%;"></div></div>
+                  <div class="bar-label">Run 2</div>
+                </div>
+                <div class="bar-col">
+                  <div class="bar-value">40.6</div>
+                  <div class="bar-shell"><div class="bar-fill base" style="height: 40.6%;"></div></div>
+                  <div class="bar-label">Run 3</div>
+                </div>
+              </div>
+              <div class="mean-row">
+                <span>Mean</span>
+                <span>37.5%</span>
+              </div>
+            </div>
+
+            <div class="score-group">
+              <h3>RL Step30 LoRA @4096</h3>
+              <div class="bars">
+                <div class="bar-col">
+                  <div class="bar-value">60.0</div>
+                  <div class="bar-shell"><div class="bar-fill rl" style="height: 60%;"></div></div>
+                  <div class="bar-label">Run 1</div>
+                </div>
+                <div class="bar-col">
+                  <div class="bar-value">75.5</div>
+                  <div class="bar-shell"><div class="bar-fill rl" style="height: 75.5%;"></div></div>
+                  <div class="bar-label">Run 2</div>
+                </div>
+                <div class="bar-col">
+                  <div class="bar-value">61.6</div>
+                  <div class="bar-shell"><div class="bar-fill rl" style="height: 61.6%;"></div></div>
+                  <div class="bar-label">Run 3</div>
+                </div>
+              </div>
+              <div class="mean-row">
+                <span>Mean</span>
+                <span>65.7%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="delta-card">
+          <div class="delta-box">
+            <div class="label">Absolute Gain</div>
+            <div class="num">+28.2</div>
+            <div class="meta">
+              同 task、同 grader、同 base family、同 inference budget，
+              only LoRA policy changed.
+            </div>
+          </div>
+
+          <div class="note-box">
+            <h3 style="margin:0; font-size:18px; color:var(--navy);">评测口径</h3>
+            <ul>
+              <li>Hybrid grading: <strong>0.4 automated + 0.6 LLM judge</strong></li>
+              <li>Judge model: <strong>DashScope qwen-plus</strong></li>
+              <li>Sampling family aligned</li>
+              <li>Inference budget fixed: <strong>max_tokens = 4096</strong></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="slide-number">03</div>
+    </section>
+
+    <section class="slide">
+      <span class="eyebrow">Slide 4 · Improvement</span>
+      <h2 class="title" style="font-size: 46px;">RL 到底把什么能力拉起来了？</h2>
+      <p class="subtitle">
+        不是“总结写得更顺”，而是三类核心能力明显更强：linkage、propagation、closure。
+      </p>
+
+      <div class="compare-layout">
+        <div class="compare-card bad">
+          <div class="compare-head">
+            <h3>Before RL</h3>
+            <span class="score-tag bad">Baseline</span>
+          </div>
+          <div class="flags">
+            <div class="flag bad"><strong>Incident Linkage 弱</strong>：相关邮件常被当成独立项</div>
+            <div class="flag bad"><strong>Priority Propagation 弱</strong>：BigClient / security 权重不稳</div>
+            <div class="flag bad"><strong>Closure 弱</strong>：输出更像邮件清单，不像 operator report</div>
+          </div>
+          <div class="excerpt">观感上像“逐封分类器”：
+
+- 每封邮件各看各的
+- 关键邮件之间关系弱
+- 结构有了，但值班感不强
+- 结果可读，但不够可执行</div>
+        </div>
+
+        <div class="compare-card good">
+          <div class="compare-head">
+            <h3>After RL</h3>
+            <span class="score-tag good">Step30 LoRA</span>
+          </div>
+          <div class="flags">
+            <div class="flag good"><strong>Incident Linkage 强</strong>：更容易把 outage 与 alert 归并成一个事件</div>
+            <div class="flag good"><strong>Priority Propagation 强</strong>：BigClient / security 更稳定上浮</div>
+            <div class="flag good"><strong>Closure 强</strong>：更容易写成结构化、可执行的最终报告</div>
+          </div>
+          <div class="excerpt">Automated: file_created=1.0, priorities=1.0, categories=1.0,
+actions=1.0, outage_is_p0=1.0, client_is_high_priority=1.0
+
+Judge: contextual links are made; summary and priority ordering are clear.
+
+结论：提升是结构性的，不是 cosmetic 的。</div>
+        </div>
+      </div>
+
+      <div class="footer-line">
+        这不是“写得更顺”，而是 <strong>incident linkage + priority propagation + closure</strong> 变强了。
+      </div>
+      <div class="slide-number">04</div>
+    </section>
+
+    <section class="slide">
+      <span class="eyebrow">Slide 5 · Artifact</span>
+      <h2 class="title" style="font-size: 46px;">最后的 Triage 产物，肉眼看起来有什么不同？</h2>
+      <p class="subtitle">
+        baseline 的问题不是“措辞不够漂亮”，而是经常根本交不出合格产物；RL 后更稳定地产出结构化、可执行的 triage report。
+      </p>
+
+      <div class="report-compare" style="margin-top:34px; position:relative; z-index:1;">
+        <div class="report-box bad">
+          <div class="rh">Baseline Final Artifact</div>
+          <pre>Run 0271 · Baseline · 40.6%
+
+# Triage Report
+
+## Summary
+### Most Critical Items
+1. P0 (Today): [Email 02.txt] - Urgent client request
+2. P0 (Today): [Email 04.txt] - Production database outage
+
+### Daily Plan
+- Address P0 items by noon
+- Resolve P0 items by Friday
+- Archive P4 items by end of week
+
+## Detailed Triage Report
+
+### P0 (Today)
+1. [Email 02.txt] - Urgent client request
+   - Priority: P0
+   - Category: "client"
+   - Recommended Action: Respond immediately
+
+2. [Email 04.txt] - Production database outage
+   - Priority: P0
+   - Category: "incident"
+   - Recommended Action: Deploy SRE plan
+
+3. [Email 06.txt] - Dependency update
+   - Priority: P0
+   - Category: "automated"
+
+4. [Email 08.txt] - Benefits enrollment
+   - Priority: P0
+   - Category: "administrative"</pre>
+        </div>
+
+        <div class="report-box good">
+          <div class="rh">RL Step30 Final Artifact</div>
+          <pre>Run 0267 · RL Step30 · 75.5%
+
+The triage report has been successfully generated
+and saved to triage_report.md.
+
+### Most Critical Items
+1. P0 - Database Outage
+   - Category: incident
+   - Action: Drop everything until resolved
+
+2. P2 - Code Review Request
+   - Category: code-review
+   - Action: Review and merge auth service refactor PR
+
+### Daily Plan
+- P0: Address database outage immediately
+- P2: Resolve code review request by Thursday
+- P1: Review blog post for accuracy by Wednesday
+- P3: Complete benefits enrollment and password rotation
+- P4: Consider flash sale offer
+- P2: Finalize API integration
+
+### Notes
+- All P0 items require urgent attention
+- P2 items must be resolved by Thursday
+- P1 items should be addressed by Wednesday</pre>
+        </div>
+      </div>
+
+      <div class="footer-line">
+        baseline 更像“过程存在，但产物不稳”；RL 后更像“真的完成了一份值班报告”。
+      </div>
+      <div class="slide-number">05</div>
+    </section>
+
+    <section class="slide">
+      <span class="eyebrow">Slide 6 · Why Score Improved</span>
+      <h2 class="title" style="font-size: 46px;">这些变化，为什么会直接变成分数提升？</h2>
+      <p class="subtitle">
+        task16 的分数不是单一主观判断。它会把“产物完成度”“关键判断”“整体质量”一起算进去，所以结构变化会直接反映到得分。
+      </p>
+
+      <div class="mapping-grid">
+        <div class="mapping-card">
+          <h3>Automated 分为什么会涨</h3>
+          <div class="mapping-list">
+            <div class="mapping-item">
+              <strong>写出了 triage_report.md</strong>
+              <span>直接决定 `file_created`，而且没有最终报告时其余结构项通常也会一起崩。</span>
+            </div>
+            <div class="mapping-item">
+              <strong>覆盖更多关键邮件</strong>
+              <span>会提升 `all_emails_covered`，尤其是 outage、BigClient、security、alert 这些关键项。</span>
+            </div>
+            <div class="mapping-item">
+              <strong>priority / category / action 更完整</strong>
+              <span>直接映射到 `priorities_assigned`、`categories_assigned`、`actions_assigned`。</span>
+            </div>
+            <div class="mapping-item">
+              <strong>incident linkage 更稳定</strong>
+              <span>会拉高 `alert_linked_to_outage`、`outage_is_p0`、`client_is_high_priority` 这些关键自动项。</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mapping-card">
+          <h3>LLM Judge 分为什么会涨</h3>
+          <div class="mapping-list">
+            <div class="mapping-item">
+              <strong>不再把邮件独立看待</strong>
+              <span>会提升 `Contextual Awareness and Connections`，这是 task16 的核心能力之一。</span>
+            </div>
+            <div class="mapping-item">
+              <strong>高价值 / 高风险项被稳定上浮</strong>
+              <span>会提升 `Priority Assignment Accuracy`，尤其是 BigClient 和 security 这类边缘但重要的邮件。</span>
+            </div>
+            <div class="mapping-item">
+              <strong>最终产物更像值班报告</strong>
+              <span>会提升 `Report Structure and Usability`，因为 summary、day plan、priority ordering 更清楚。</span>
+            </div>
+            <div class="mapping-item">
+              <strong>行动建议更具体</strong>
+              <span>会提升 `Action Recommendations`，从“respond”变成更像 operator 的可执行动作。</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-line">
+        所以 `37.5% → 65.7%` 不是“评委主观觉得更好看”，而是 task 所关心的几个核心能力同时抬起来了。
+      </div>
+      <div class="slide-number">06</div>
+    </section>
+
+    <section class="slide">
+      <span class="eyebrow">Slide 7 · Graph</span>
+      <h2 class="title" style="font-size: 46px;">RL 激发出的能力：Inbox Graph</h2>
+      <p class="subtitle">
+        baseline 更像局部分类器；RL 后更像在整个 inbox 上建立 incident graph。
+      </p>
+
+      <div class="graph-layout">
+        <div class="graph-card">
+          <h3>Baseline</h3>
+          <p>节点大多孤立，关键邮件之间关系弱，优先级传播不稳定。</p>
+          <svg viewBox="0 0 560 420" aria-label="baseline inbox graph">
+            <line x1="132" y1="124" x2="284" y2="82" stroke="#d9c8bf" stroke-width="3" stroke-dasharray="8 8" />
+            <line x1="284" y1="82" x2="422" y2="150" stroke="#e8ddd3" stroke-width="2" />
+            <circle cx="132" cy="124" r="45" fill="#f7d8d8" stroke="#d38e8e" stroke-width="3" />
+            <text x="132" y="116" text-anchor="middle" font-size="16" font-weight="700" fill="#7f1d1d">email_01</text>
+            <text x="132" y="138" text-anchor="middle" font-size="12" fill="#7f1d1d">CTO outage</text>
+
+            <circle cx="284" cy="82" r="38" fill="#ece7df" stroke="#c8b9a9" stroke-width="3" />
+            <text x="284" y="78" text-anchor="middle" font-size="15" font-weight="700" fill="#5f554a">email_13</text>
+            <text x="284" y="98" text-anchor="middle" font-size="12" fill="#6e665d">alert</text>
+
+            <circle cx="422" cy="150" r="40" fill="#f1e8da" stroke="#d1b38a" stroke-width="3" />
+            <text x="422" y="144" text-anchor="middle" font-size="15" font-weight="700" fill="#8a4b0a">email_05</text>
+            <text x="422" y="164" text-anchor="middle" font-size="12" fill="#8a4b0a">BigClient</text>
+
+            <circle cx="210" cy="276" r="40" fill="#f0ebe3" stroke="#cdbfb0" stroke-width="3" />
+            <text x="210" y="270" text-anchor="middle" font-size="15" font-weight="700" fill="#6e665d">email_08</text>
+            <text x="210" y="290" text-anchor="middle" font-size="12" fill="#6e665d">security</text>
+
+            <ellipse cx="412" cy="302" rx="86" ry="44" fill="#efebe5" stroke="#cfc4b8" stroke-width="3" />
+            <text x="412" y="296" text-anchor="middle" font-size="16" font-weight="700" fill="#6e665d">others</text>
+            <text x="412" y="316" text-anchor="middle" font-size="12" fill="#6e665d">flat mailbox view</text>
+          </svg>
+          <div class="caption">
+            <strong>Local classification:</strong> `email_13` 没稳定并入 outage；`email_05` 和 `email_08`
+            更像独立事项，而不是在全局 inbox 中被重新加权。
+          </div>
+        </div>
+
+        <div class="graph-card">
+          <h3>RL Step30</h3>
+          <p>关键节点之间连边更清楚，优先级从核心事件向相关邮件传播。</p>
+          <svg viewBox="0 0 560 420" aria-label="rl inbox graph">
+            <line x1="138" y1="128" x2="276" y2="104" stroke="#2563eb" stroke-width="6" />
+            <line x1="276" y1="104" x2="416" y2="152" stroke="#34d399" stroke-width="5" opacity="0.8" />
+            <line x1="276" y1="104" x2="224" y2="268" stroke="#f59e0b" stroke-width="5" opacity="0.8" />
+
+            <circle cx="138" cy="128" r="48" fill="#fee2e2" stroke="#dc2626" stroke-width="4" />
+            <text x="138" y="119" text-anchor="middle" font-size="16" font-weight="800" fill="#991b1b">email_01</text>
+            <text x="138" y="141" text-anchor="middle" font-size="12" fill="#991b1b">P0 outage</text>
+
+            <circle cx="276" cy="104" r="44" fill="#dbeafe" stroke="#2563eb" stroke-width="4" />
+            <text x="276" y="96" text-anchor="middle" font-size="16" font-weight="800" fill="#1d4ed8">email_13</text>
+            <text x="276" y="118" text-anchor="middle" font-size="12" fill="#1d4ed8">linked alert</text>
+
+            <circle cx="416" cy="152" r="42" fill="#dcfce7" stroke="#16a34a" stroke-width="4" />
+            <text x="416" y="144" text-anchor="middle" font-size="15" font-weight="800" fill="#166534">email_05</text>
+            <text x="416" y="166" text-anchor="middle" font-size="12" fill="#166534">high-value client</text>
+
+            <circle cx="224" cy="268" r="41" fill="#ffedd5" stroke="#ea580c" stroke-width="4" />
+            <text x="224" y="260" text-anchor="middle" font-size="15" font-weight="800" fill="#9a3412">email_08</text>
+            <text x="224" y="282" text-anchor="middle" font-size="12" fill="#9a3412">security deadline</text>
+
+            <ellipse cx="412" cy="306" rx="82" ry="42" fill="#eef6f0" stroke="#9ac6aa" stroke-width="3" />
+            <text x="412" y="300" text-anchor="middle" font-size="16" font-weight="700" fill="#466854">standalone</text>
+            <text x="412" y="320" text-anchor="middle" font-size="12" fill="#5e7c68">lower-priority noise</text>
+          </svg>
+          <div class="caption">
+            <strong>Global inbox reasoning:</strong> `email_01 ↔ email_13` 形成核心 incident group；
+            `email_05` 和 `email_08` 被更稳定地上浮为高权重业务项。
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-line">
+        RL did not just improve style; it improved <strong>operational judgment</strong>.
+      </div>
+      <div class="slide-number">07</div>
+    </section>
+  </main>
+</body>
+</html>
